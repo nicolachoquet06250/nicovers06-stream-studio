@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nicovers06 Stream Studio</string>
+    <string name="notification_channel">Diffusion en direct</string>
+    <string name="notification_title">Stream en cours</string>
+    <string name="notification_stop">Arrêter</string>
+    <string name="studio_title">Stream Studio</string>
+    <string name="studio_subtitle">Composez puis diffusez votre scène</string>
+    <string name="status_ready">PRÊT</string>
+    <string name="add_scene">Ajouter une scène</string>
+    <string name="plus_symbol">+</string>
+    <string name="delete_scene">Supprimer la scène</string>
+    <string name="delete_symbol">×</string>
+    <string name="preview_hint">APERÇU 720p · 30 FPS\nDéplacez et redimensionnez les blocs</string>
+    <string name="sources_label">SOURCES</string>
+    <string name="screen_capture">Partage d’écran</string>
+    <string name="screen_capture_help">Choisissez l’écran ou l’application à partager avant de démarrer le stream.</string>
+    <string name="screen_capture_help_legacy">Cette version d’Android permet uniquement de partager l’écran complet. Le partage d’une seule application nécessite Android 14 ou plus.</string>
+    <string name="select_screen_source">Choisir l’écran ou l’application</string>
+    <string name="select_screen_source_legacy">Choisir l’écran complet</string>
+    <string name="change_screen_source">Modifier la source partagée</string>
+    <string name="screen_source_missing">Aucune source sélectionnée</string>
+    <string name="screen_source_ready">Source sélectionnée · prête à diffuser</string>
+    <string name="screen_source_active">Partage d’écran actif</string>
+    <string name="microphone">Microphone</string>
+    <string name="camera">Caméra</string>
+    <string name="background_blur">Flouter le fond en temps réel</string>
+    <string name="use_back_camera">Utiliser la caméra arrière</string>
+    <string name="chat_block">Bloc de chat</string>
+    <string name="chat_author_hint">Pseudo (aperçu)</string>
+    <string name="chat_message_hint">Message de test</string>
+    <string name="add_chat_message">Ajouter au bloc de chat</string>
+    <string name="broadcast_label">DIFFUSION</string>
+    <string name="server_url_hint">URL du serveur RTMP(S)</string>
+    <string name="stream_key_hint">Clé de stream</string>
+    <string name="stream_key_notice">La clé reste uniquement en mémoire et n’est jamais enregistrée. Le chat Twitch/YouTube réel nécessitera l’étape OAuth suivante.</string>
+    <string name="start_stream">Démarrer le stream</string>
+    <string name="numbered_scene">Scène %1$d</string>
+</resources>

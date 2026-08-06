@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="panel">#141821</color>
+    <color name="panel_alt">#1B202B</color>
+    <color name="border">#2C3442</color>
+    <color name="text_primary">#F7F8FA</color>
+    <color name="text_secondary">#AAB2C0</color>
+    <color name="purple">#8B5CF6</color>
+    <color name="red">#EF4444</color>
+    <color name="green">#34D399</color>
+</resources>

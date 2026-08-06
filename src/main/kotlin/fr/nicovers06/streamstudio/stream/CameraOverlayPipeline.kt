@@ -1,0 +1,320 @@
+package fr.nicovers06.streamstudio.stream
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BlendMode
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.renderscript.Allocation
+import android.renderscript.Element
+import android.renderscript.RenderScript
+import android.renderscript.ScriptIntrinsicBlur
+import android.util.Size
+import android.view.Surface
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.segmentation.Segmentation
+import com.google.mlkit.vision.segmentation.SegmentationMask
+import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
+import fr.nicovers06.streamstudio.model.CameraFacing
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.max
+import kotlin.math.min
+
+/**
+ * Captures CameraX analysis frames, optionally separates the person with ML Kit and
+ * draws the recomposed image into the SurfaceFilterRender input surface.
+ */
+class CameraOverlayPipeline(
+    private val context: Context,
+    private val lifecycleOwner: LifecycleOwner,
+    private val outputSurface: Surface,
+    private val outputSurfaceSize: Size = Size(640, 360),
+    private val onError: (String) -> Unit,
+) {
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val analyzerExecutor = Executors.newSingleThreadExecutor()
+    private val processing = AtomicBoolean(false)
+    @Suppress("DEPRECATION")
+    private val renderScript = RenderScript.create(context.applicationContext)
+    @Suppress("DEPRECATION")
+    private val blurScript = ScriptIntrinsicBlur.create(renderScript, Element.U8_4(renderScript)).apply {
+        setRadius(14f)
+    }
+    private val segmenter = Segmentation.getClient(
+        SelfieSegmenterOptions.Builder()
+            .setDetectorMode(SelfieSegmenterOptions.STREAM_MODE)
+            .build(),
+    )
+
+    @Volatile private var running = false
+    @Volatile private var blurEnabled = true
+    @Volatile private var facing = CameraFacing.FRONT
+    private var provider: ProcessCameraProvider? = null
+
+    fun start(backgroundBlur: Boolean, cameraFacing: CameraFacing) {
+        if (running) {
+            update(backgroundBlur, cameraFacing)
+            return
+        }
+        blurEnabled = backgroundBlur
+        facing = cameraFacing
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            onError("Autorisation caméra manquante")
+            return
+        }
+        running = true
+        val future = ProcessCameraProvider.getInstance(context)
+        future.addListener({
+            runCatching { future.get() }
+                .onSuccess {
+                    provider = it
+                    bindCamera()
+                }
+                .onFailure {
+                    running = false
+                    onError("Caméra indisponible : ${it.message.orEmpty()}")
+                }
+        }, ContextCompat.getMainExecutor(context))
+    }
+
+    fun update(backgroundBlur: Boolean, cameraFacing: CameraFacing) {
+        val facingChanged = facing != cameraFacing
+        blurEnabled = backgroundBlur
+        facing = cameraFacing
+        if (running && facingChanged) bindCamera()
+    }
+
+    fun stop() {
+        running = false
+        mainHandler.post { provider?.unbindAll() }
+        clearSurface()
+    }
+
+    fun release() {
+        stop()
+        segmenter.close()
+        @Suppress("DEPRECATION")
+        blurScript.destroy()
+        @Suppress("DEPRECATION")
+        renderScript.destroy()
+        analyzerExecutor.shutdown()
+        outputSurface.release()
+    }
+
+    private fun bindCamera() {
+        if (!running) return
+        val cameraProvider = provider ?: return
+        val selector = CameraSelector.Builder()
+            .requireLensFacing(
+                if (facing == CameraFacing.FRONT) {
+                    CameraSelector.LENS_FACING_FRONT
+                } else {
+                    CameraSelector.LENS_FACING_BACK
+                },
+            )
+            .build()
+        val analysis = ImageAnalysis.Builder()
+            .setTargetResolution(outputSurfaceSize)
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also { it.setAnalyzer(analyzerExecutor, ::analyze) }
+
+        runCatching {
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(lifecycleOwner, selector, analysis)
+        }.onFailure { onError("Impossible d’ouvrir cette caméra : ${it.message.orEmpty()}") }
+    }
+
+    private fun analyze(imageProxy: ImageProxy) {
+        if (!running || !processing.compareAndSet(false, true)) {
+            imageProxy.close()
+            return
+        }
+
+        val frame = runCatching { imageProxy.toBitmap().orient(imageProxy.imageInfo.rotationDegrees, facing == CameraFacing.FRONT) }
+            .getOrElse {
+                imageProxy.close()
+                processing.set(false)
+                return
+            }
+        imageProxy.close()
+
+        if (!blurEnabled) {
+            render(frame)
+            return
+        }
+
+        var handedToRenderer = false
+        segmenter.process(InputImage.fromBitmap(frame, 0))
+            .addOnSuccessListener(analyzerExecutor) { mask ->
+                handedToRenderer = true
+                if (running) {
+                    val output = runCatching { compositeBlur(frame, mask) }.getOrElse { frame }
+                    render(output)
+                } else {
+                    frame.recycle()
+                    processing.set(false)
+                }
+            }
+            .addOnFailureListener(analyzerExecutor) {
+                handedToRenderer = true
+                if (running) render(frame) else {
+                    frame.recycle()
+                    processing.set(false)
+                }
+            }
+            .addOnCompleteListener(analyzerExecutor) {
+                if (!handedToRenderer) {
+                    frame.recycle()
+                    processing.set(false)
+                }
+            }
+    }
+
+    private fun Bitmap.orient(rotationDegrees: Int, mirror: Boolean): Bitmap {
+        if (rotationDegrees == 0 && !mirror && config == Bitmap.Config.ARGB_8888) return this
+        val matrix = Matrix().apply {
+            postRotate(rotationDegrees.toFloat())
+            if (mirror) postScale(-1f, 1f)
+        }
+        val oriented = Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
+        if (oriented !== this) recycle()
+        if (oriented.config == Bitmap.Config.ARGB_8888) return oriented
+        return oriented.copy(Bitmap.Config.ARGB_8888, false).also { oriented.recycle() }
+    }
+
+    private fun compositeBlur(foreground: Bitmap, mask: SegmentationMask): Bitmap {
+        val width = foreground.width
+        val height = foreground.height
+        val blurred = createBlurredBitmap(foreground)
+        val sharpPixels = IntArray(width * height)
+        val blurredPixels = IntArray(width * height)
+        val outputPixels = IntArray(width * height)
+        foreground.getPixels(sharpPixels, 0, width, 0, 0, width, height)
+        blurred.getPixels(blurredPixels, 0, width, 0, 0, width, height)
+
+        val maskWidth = mask.width
+        val maskHeight = mask.height
+        val confidences = FloatArray(maskWidth * maskHeight)
+        val buffer = mask.buffer.asFloatBuffer()
+        buffer.rewind()
+        buffer.get(confidences, 0, min(confidences.size, buffer.remaining()))
+
+        for (y in 0 until height) {
+            val maskY = min(maskHeight - 1, y * maskHeight / height)
+            for (x in 0 until width) {
+                val index = y * width + x
+                val maskX = min(maskWidth - 1, x * maskWidth / width)
+                var mix = ((confidences[maskY * maskWidth + maskX] - 0.25f) / 0.5f).coerceIn(0f, 1f)
+                mix = mix * mix * (3f - 2f * mix)
+                outputPixels[index] = blend(blurredPixels[index], sharpPixels[index], mix)
+            }
+        }
+
+        return Bitmap.createBitmap(outputPixels, width, height, Bitmap.Config.ARGB_8888).also {
+            foreground.recycle()
+            blurred.recycle()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun createBlurredBitmap(source: Bitmap): Bitmap {
+        // Blur at half resolution, then upscale. This reduces GPU/CPU work while
+        // producing the softer background expected from a portrait-mode blur.
+        val smallWidth = max(1, source.width / 2)
+        val smallHeight = max(1, source.height / 2)
+        val small = Bitmap.createScaledBitmap(source, smallWidth, smallHeight, true)
+            .copy(Bitmap.Config.ARGB_8888, true)
+        val blurredSmall = Bitmap.createBitmap(smallWidth, smallHeight, Bitmap.Config.ARGB_8888)
+        val input = Allocation.createFromBitmap(renderScript, small)
+        val output = Allocation.createFromBitmap(renderScript, blurredSmall)
+        try {
+            blurScript.setInput(input)
+            blurScript.forEach(output)
+            output.copyTo(blurredSmall)
+        } finally {
+            input.destroy()
+            output.destroy()
+            small.recycle()
+        }
+        return Bitmap.createScaledBitmap(blurredSmall, source.width, source.height, true).also {
+            blurredSmall.recycle()
+        }
+    }
+
+    private fun blend(background: Int, foreground: Int, amount: Float): Int {
+        val inverse = 1f - amount
+        return Color.rgb(
+            (Color.red(background) * inverse + Color.red(foreground) * amount).toInt(),
+            (Color.green(background) * inverse + Color.green(foreground) * amount).toInt(),
+            (Color.blue(background) * inverse + Color.blue(foreground) * amount).toInt(),
+        )
+    }
+
+    private fun render(bitmap: Bitmap) {
+        mainHandler.post {
+            if (!running || !outputSurface.isValid) {
+                bitmap.recycle()
+                processing.set(false)
+                return@post
+            }
+            val canvas = runCatching { outputSurface.lockCanvas(null) }.getOrNull()
+            if (canvas == null) {
+                bitmap.recycle()
+                processing.set(false)
+                return@post
+            }
+            try {
+                canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                val sourceRatio = bitmap.width.toFloat() / bitmap.height
+                val targetRatio = canvas.width.toFloat() / canvas.height
+                val destination = if (sourceRatio > targetRatio) {
+                    val scaledWidth = canvas.height * sourceRatio
+                    val left = (canvas.width - scaledWidth) / 2f
+                    android.graphics.RectF(left, 0f, left + scaledWidth, canvas.height.toFloat())
+                } else {
+                    val scaledHeight = canvas.width / sourceRatio
+                    val top = (canvas.height - scaledHeight) / 2f
+                    android.graphics.RectF(0f, top, canvas.width.toFloat(), top + scaledHeight)
+                }
+                canvas.drawBitmap(bitmap, null, destination, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            } finally {
+                outputSurface.unlockCanvasAndPost(canvas)
+                bitmap.recycle()
+                processing.set(false)
+            }
+        }
+    }
+
+    private fun clearSurface() {
+        mainHandler.post {
+            if (!outputSurface.isValid) return@post
+            val canvas = runCatching { outputSurface.lockCanvas(null) }.getOrNull() ?: return@post
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    canvas.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
+                } else {
+                    @Suppress("DEPRECATION")
+                    canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                }
+            } finally {
+                outputSurface.unlockCanvasAndPost(canvas)
+            }
+        }
+    }
+}
