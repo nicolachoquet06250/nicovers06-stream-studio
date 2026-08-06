@@ -1,0 +1,206 @@
+name: Android CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_run: ${{ steps.version.outputs.should_run }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Vérifier la version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(cat version)"
+          LATEST_TAG="$(git for-each-ref --count=1 --sort=-creatordate --format='%(refname:short)' refs/tags)"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if [ "$VERSION" = "$LATEST_TAG" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::La version $VERSION correspond déjà au dernier tag."
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configurer Java
+        if: steps.version.outputs.should_run == 'true'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Configurer Gradle
+        if: steps.version.outputs.should_run == 'true'
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Autoriser l'exécution du wrapper Gradle
+        if: steps.version.outputs.should_run == 'true'
+        run: chmod +x gradlew
+
+      - name: Exécuter les tests unitaires
+        if: steps.version.outputs.should_run == 'true'
+        run: ./gradlew :app:testDebugUnitTest
+
+  build_debug_apk:
+    name: Build APK debug
+    needs: test
+    if: needs.test.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configurer Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Configurer Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Construire l'APK debug
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug
+
+      - name: Enregistrer l'APK debug
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  build_production_apk:
+    name: Build APK de production
+    needs: test
+    if: needs.test.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configurer Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Configurer Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Construire l'APK de production
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease
+
+      - name: Préparer l'APK de production
+        shell: bash
+        run: |
+          APK_PATH="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
+
+          if [ -z "$APK_PATH" ]; then
+            echo "Aucun APK de production n'a été généré." >&2
+            exit 1
+          fi
+
+          cp "$APK_PATH" app-production.apk
+
+      - name: Enregistrer l'APK de production
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-production-apk
+          path: app-production.apk
+          if-no-files-found: error
+
+  create_release:
+    name: Créer la release
+    needs:
+      - test
+      - build_debug_apk
+      - build_production_apk
+    if: needs.test.outputs.should_run == 'true' && github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Créer la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          gh release create "$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --generate-notes \
+            --draft
+
+  publish_artifacts:
+    name: Envoyer les APK dans la release
+    needs:
+      - test
+      - create_release
+    if: needs.create_release.result == 'success'
+    runs-on: ubuntu-latest
+
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Télécharger l'APK debug
+        uses: actions/download-artifact@v8
+        with:
+          name: app-debug-apk
+          path: artifacts/debug
+
+      - name: Télécharger l'APK de production
+        uses: actions/download-artifact@v8
+        with:
+          name: app-production-apk
+          path: artifacts/production
+
+      - name: Envoyer l'APK debug
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          gh release upload \
+            "$VERSION" \
+            artifacts/debug/app-debug.apk
+
+      - name: Envoyer l'APK de production
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          gh release upload \
+            "$VERSION" \
+            artifacts/production/app-production.apk
+
+      - name: Publier la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.test.outputs.version }}
+        run: gh release edit "$VERSION" --draft=false
