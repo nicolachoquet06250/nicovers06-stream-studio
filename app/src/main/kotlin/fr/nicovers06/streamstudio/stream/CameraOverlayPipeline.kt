@@ -10,6 +10,7 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -18,6 +19,8 @@ import android.renderscript.Element
 import android.renderscript.RenderScript
 import android.renderscript.ScriptIntrinsicBlur
 import android.util.Size
+import android.view.Display
+import android.view.OrientationEventListener
 import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -64,7 +67,23 @@ class CameraOverlayPipeline(
     @Volatile private var running = false
     @Volatile private var blurEnabled = true
     @Volatile private var facing = CameraFacing.FRONT
+    @Volatile private var targetRotation = defaultDisplayRotation()
     private var provider: ProcessCameraProvider? = null
+    private var imageAnalysis: ImageAnalysis? = null
+    private val orientationListener = object : OrientationEventListener(context.applicationContext) {
+        override fun onOrientationChanged(orientation: Int) {
+            if (orientation == ORIENTATION_UNKNOWN) return
+            val rotation = when (orientation) {
+                in 45 until 135 -> Surface.ROTATION_270
+                in 135 until 225 -> Surface.ROTATION_180
+                in 225 until 315 -> Surface.ROTATION_90
+                else -> Surface.ROTATION_0
+            }
+            if (rotation == targetRotation) return
+            targetRotation = rotation
+            mainHandler.post { imageAnalysis?.targetRotation = rotation }
+        }
+    }
 
     fun start(backgroundBlur: Boolean, cameraFacing: CameraFacing) {
         if (running) {
@@ -78,6 +97,9 @@ class CameraOverlayPipeline(
             return
         }
         running = true
+        mainHandler.post {
+            if (orientationListener.canDetectOrientation()) orientationListener.enable()
+        }
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             runCatching { future.get() }
@@ -87,6 +109,7 @@ class CameraOverlayPipeline(
                 }
                 .onFailure {
                     running = false
+                    mainHandler.post { orientationListener.disable() }
                     onError("Caméra indisponible : ${it.message.orEmpty()}")
                 }
         }, ContextCompat.getMainExecutor(context))
@@ -101,7 +124,11 @@ class CameraOverlayPipeline(
 
     fun stop() {
         running = false
-        mainHandler.post { provider?.unbindAll() }
+        mainHandler.post {
+            orientationListener.disable()
+            provider?.unbindAll()
+            imageAnalysis = null
+        }
         clearSurface()
     }
 
@@ -130,14 +157,19 @@ class CameraOverlayPipeline(
             .build()
         val analysis = ImageAnalysis.Builder()
             .setTargetResolution(outputSurfaceSize)
+            .setTargetRotation(targetRotation)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
             .also { it.setAnalyzer(analyzerExecutor, ::analyze) }
+        imageAnalysis = analysis
 
         runCatching {
             cameraProvider.unbindAll()
             cameraProvider.bindToLifecycle(lifecycleOwner, selector, analysis)
-        }.onFailure { onError("Impossible d’ouvrir cette caméra : ${it.message.orEmpty()}") }
+        }.onFailure {
+            if (imageAnalysis === analysis) imageAnalysis = null
+            onError("Impossible d’ouvrir cette caméra : ${it.message.orEmpty()}")
+        }
     }
 
     private fun analyze(imageProxy: ImageProxy) {
@@ -146,7 +178,12 @@ class CameraOverlayPipeline(
             return
         }
 
-        val frame = runCatching { imageProxy.toBitmap().mirrorIfNeeded(facing == CameraFacing.FRONT) }
+        val frame = runCatching {
+            imageProxy.toBitmap().transformFrame(
+                rotationDegrees = imageProxy.imageInfo.rotationDegrees,
+                mirror = facing == CameraFacing.FRONT,
+            )
+        }
             .getOrElse {
                 imageProxy.close()
                 processing.set(false)
@@ -186,23 +223,25 @@ class CameraOverlayPipeline(
             }
     }
 
-    private fun Bitmap.mirrorIfNeeded(mirror: Boolean): Bitmap {
-        if (!mirror && config == Bitmap.Config.ARGB_8888) return this
-        val mirrored = if (mirror) {
-            Bitmap.createBitmap(
-                this,
-                0,
-                0,
-                width,
-                height,
-                Matrix().apply { postScale(-1f, 1f) },
-                true,
-            ).also { if (it !== this) recycle() }
+    private fun Bitmap.transformFrame(rotationDegrees: Int, mirror: Boolean): Bitmap {
+        if (rotationDegrees == 0 && !mirror && config == Bitmap.Config.ARGB_8888) return this
+        val transformed = if (rotationDegrees != 0 || mirror) {
+            val matrix = Matrix().apply {
+                postRotate(rotationDegrees.toFloat())
+                if (mirror) postScale(-1f, 1f)
+            }
+            Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
+                .also { if (it !== this) recycle() }
         } else {
             this
         }
-        if (mirrored.config == Bitmap.Config.ARGB_8888) return mirrored
-        return mirrored.copy(Bitmap.Config.ARGB_8888, false).also { mirrored.recycle() }
+        if (transformed.config == Bitmap.Config.ARGB_8888) return transformed
+        return transformed.copy(Bitmap.Config.ARGB_8888, false).also { transformed.recycle() }
+    }
+
+    private fun defaultDisplayRotation(): Int {
+        val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        return displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: Surface.ROTATION_0
     }
 
     private fun compositeBlur(foreground: Bitmap, mask: SegmentationMask): Bitmap {

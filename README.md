@@ -11,6 +11,7 @@ L'application de quickstart as été générée par [android-qs-app-generator](h
 - partage de l’écran ou d’une application via `MediaProjection`, composé dans le bloc écran ;
 - microphone, avec une vraie piste AAC silencieuse lorsqu’il est désactivé ;
 - caméra avant/arrière via CameraX ;
+- orientation de l’image caméra synchronisée avec le device, rotations à 90° et 180° comprises ;
 - segmentation du sujet et flou du décor en temps réel ;
 - rendu du chat dans la composition vidéo ;
 - encodage H.264/AAC en 1280×720 à 30 FPS ;
