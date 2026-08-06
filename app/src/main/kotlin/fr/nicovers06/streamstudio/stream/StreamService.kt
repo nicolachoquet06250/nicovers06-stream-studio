@@ -39,6 +39,7 @@ import fr.nicovers06.streamstudio.model.StreamScene
 class StreamService : LifecycleService(), ConnectChecker {
     interface Listener {
         fun onStateChanged(isStreaming: Boolean, status: String)
+        fun onScreenCaptureChanged(isReady: Boolean)
         fun onBitrateChanged(bitsPerSecond: Long)
         fun onWarning(message: String)
     }
@@ -104,6 +105,7 @@ class StreamService : LifecycleService(), ConnectChecker {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
+            ACTION_PREPARE_SCREEN -> handlePrepareScreen(intent)
             ACTION_START -> handleStart(intent)
             ACTION_STOP -> {
                 stopBroadcast()
@@ -124,21 +126,29 @@ class StreamService : LifecycleService(), ConnectChecker {
     fun setListener(listener: Listener?) {
         this.listener = listener
         listener?.onStateChanged(isStreaming(), currentStatus)
+        listener?.onScreenCaptureChanged(mediaProjection != null)
     }
 
     fun isStreaming(): Boolean = ::stream.isInitialized && stream.isStreaming
 
+    fun hasScreenCapture(): Boolean = mediaProjection != null
+
+    fun stopScreenPreview() {
+        if (isStreaming()) return
+        stopScreenCapture()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     fun applyScene(scene: StreamScene) {
         currentScene = scene
-        if (!scene.screen.enabled) {
-            screenPipeline?.release()
-            screenPipeline = null
-        } else if (mediaProjection != null && screenPipeline == null) {
-            restartScreenPipeline()
+        if (scene.screen.enabled && mediaProjection != null) {
+            ensureScreenPipeline()
         }
         screenFilter?.let {
             applyTransform(it, scene.screen.bounds)
-            it.setAlpha(if (scene.screen.enabled && screenPipeline != null) 1f else 0f)
+            val hasScreenOutput = screenPipeline != null && screenSurface?.isValid == true
+            it.setAlpha(if (scene.screen.enabled && hasScreenOutput) 1f else 0f)
         }
         cameraFilter?.let {
             applyTransform(it, scene.camera.bounds)
@@ -173,10 +183,12 @@ class StreamService : LifecycleService(), ConnectChecker {
 
     fun detachPreview() {
         if (!stream.isOnPreview) return
+        val keepScreenCapture = !stream.isStreaming && mediaProjection != null
+        if (keepScreenCapture) screenPipeline?.detachSurface()
         stream.stopPreview(true)
         if (!stream.isStreaming) {
             filtersAdded = false
-            releaseOverlayPipelines()
+            releaseOverlayPipelines(keepScreenCapture = keepScreenCapture)
             screenFilter = null
             cameraFilter = null
             chatFilter = null
@@ -204,6 +216,42 @@ class StreamService : LifecycleService(), ConnectChecker {
         listener?.onStateChanged(false, currentStatus)
     }
 
+    private fun handlePrepareScreen(intent: Intent) {
+        if (isStreaming()) {
+            listener?.onWarning("Arrêtez le stream avant de modifier la source partagée")
+            return
+        }
+        val scene = runCatching {
+            StreamScene.fromJson(org.json.JSONObject(intent.getStringExtra(EXTRA_SCENE_JSON).orEmpty()))
+        }.getOrElse { currentScene }
+        startForegroundForScreenPreview("Aperçu du partage d’écran")
+
+        if (!prepared || !scene.screen.enabled) {
+            failScreenPreview("Impossible de préparer l’aperçu du partage d’écran")
+            return
+        }
+        @Suppress("DEPRECATION")
+        val projectionData = intent.getParcelableExtra<Intent>(EXTRA_PROJECTION_DATA)
+        val resultCode = intent.getIntExtra(EXTRA_PROJECTION_RESULT, Activity.RESULT_CANCELED)
+        if (projectionData == null || resultCode != Activity.RESULT_OK) {
+            failScreenPreview("Autorisation de capture d’écran manquante")
+            return
+        }
+
+        stopScreenCapture(notifyListener = false)
+        ensureFilters()
+        applyScene(scene)
+        runCatching {
+            mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, projectionData)
+                ?: error("MediaProjection indisponible")
+            check(ensureScreenPipeline()) { "Surface de partage d’écran indisponible" }
+        }.onSuccess {
+            listener?.onScreenCaptureChanged(true)
+        }.onFailure {
+            failScreenPreview("Aperçu du partage d’écran indisponible : ${it.message.orEmpty()}")
+        }
+    }
+
     private fun handleStart(intent: Intent) {
         val scene = runCatching {
             StreamScene.fromJson(org.json.JSONObject(intent.getStringExtra(EXTRA_SCENE_JSON).orEmpty()))
@@ -219,7 +267,7 @@ class StreamService : LifecycleService(), ConnectChecker {
         applyScene(scene)
 
         if (!configureAudio(scene)) return
-        if (!configureVideo(scene, intent)) return
+        if (!configureVideo(scene)) return
 
         runCatching { stream.startStream(endpoint) }
             .onSuccess {
@@ -247,41 +295,45 @@ class StreamService : LifecycleService(), ConnectChecker {
         }
     }
 
-    private fun configureVideo(scene: StreamScene, intent: Intent): Boolean {
+    private fun configureVideo(scene: StreamScene): Boolean {
         val baseReady = runCatching {
             if (stream.videoSource !is NoVideoSource) stream.changeVideoSource(NoVideoSource())
         }.onFailure { failStart("Source vidéo indisponible") }.isSuccess
         if (!baseReady) return false
 
-        stopScreenCapture()
-        if (!scene.screen.enabled) return true
-
-        @Suppress("DEPRECATION")
-        val projectionData = intent.getParcelableExtra<Intent>(EXTRA_PROJECTION_DATA)
-        val resultCode = intent.getIntExtra(EXTRA_PROJECTION_RESULT, Activity.RESULT_CANCELED)
-        if (projectionData == null || resultCode != Activity.RESULT_OK) {
-            failStart("Autorisation de capture d’écran manquante")
+        if (!scene.screen.enabled) {
+            stopScreenCapture()
+            return true
+        }
+        if (mediaProjection == null) {
+            failStart("Choisissez l’écran ou l’application à partager avant de démarrer")
             return false
         }
-        return runCatching {
-            mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, projectionData)
-                ?: error("MediaProjection indisponible")
-            check(restartScreenPipeline()) { "Surface de partage d’écran indisponible" }
-        }.onFailure { failStart("Capture d’écran indisponible : ${it.message.orEmpty()}") }.isSuccess
+        return if (ensureScreenPipeline()) {
+            true
+        } else {
+            failStart("La surface de partage d’écran n’a pas pu démarrer")
+            false
+        }
     }
 
     private fun ensureFilters() {
         if (filtersAdded) return
-        releaseOverlayPipelines()
+        releaseOverlayPipelines(keepScreenCapture = mediaProjection != null)
 
         screenFilter = SurfaceFilterRender(SurfaceFilterRender.SurfaceReadyCallback { texture: SurfaceTexture ->
             texture.setDefaultBufferSize(OUTPUT_WIDTH, OUTPUT_HEIGHT)
-            screenPipeline?.release()
-            screenPipeline = null
+            screenPipeline?.detachSurface()
             screenSurface?.release()
             screenSurface = Surface(texture)
-            if (!restartScreenPipeline()) {
-                mainHandler.post { failStart("La surface de partage d’écran n’a pas pu démarrer") }
+            if (!ensureScreenPipeline()) {
+                mainHandler.post {
+                    if (stream.isStreaming) {
+                        failStart("La surface de partage d’écran n’a pas pu démarrer")
+                    } else {
+                        failScreenPreview("La surface d’aperçu du partage d’écran n’a pas pu démarrer")
+                    }
+                }
             }
             applyScene(currentScene)
         })
@@ -320,9 +372,13 @@ class StreamService : LifecycleService(), ConnectChecker {
         filtersAdded = true
     }
 
-    private fun releaseOverlayPipelines() {
-        screenPipeline?.release()
-        screenPipeline = null
+    private fun releaseOverlayPipelines(keepScreenCapture: Boolean = false) {
+        if (keepScreenCapture) {
+            screenPipeline?.detachSurface()
+        } else {
+            screenPipeline?.release()
+            screenPipeline = null
+        }
         screenSurface?.release()
         screenSurface = null
         cameraPipeline?.release()
@@ -331,15 +387,19 @@ class StreamService : LifecycleService(), ConnectChecker {
         chatRenderer = null
     }
 
-    private fun restartScreenPipeline(): Boolean {
-        screenPipeline?.release()
-        screenPipeline = null
+    private fun ensureScreenPipeline(): Boolean {
         screenFilter?.setAlpha(0f)
 
         if (!currentScene.screen.enabled) return true
         val projection = mediaProjection ?: return true
         val surface = screenSurface ?: return true
         if (!surface.isValid) return false
+
+        screenPipeline?.let { pipeline ->
+            val attached = pipeline.attachSurface(surface)
+            if (attached) screenFilter?.setAlpha(1f)
+            return attached
+        }
 
         val pipeline = ScreenOverlayPipeline(
             context = applicationContext,
@@ -354,10 +414,11 @@ class StreamService : LifecycleService(), ConnectChecker {
                         screenPipeline?.release()
                         screenPipeline = null
                         screenFilter?.setAlpha(0f)
+                        listener?.onScreenCaptureChanged(false)
                         if (stream.isStreaming) {
                             failStart("Le partage d’écran a été arrêté")
                         } else {
-                            listener?.onWarning("Le partage d’écran a été arrêté")
+                            failScreenPreview("Le partage d’écran a été arrêté")
                         }
                     }
                 }
@@ -374,13 +435,14 @@ class StreamService : LifecycleService(), ConnectChecker {
         return true
     }
 
-    private fun stopScreenCapture() {
+    private fun stopScreenCapture(notifyListener: Boolean = true) {
         val projection = mediaProjection
         mediaProjection = null
         screenPipeline?.release()
         screenPipeline = null
         screenFilter?.setAlpha(0f)
         projection?.stop()
+        if (notifyListener) listener?.onScreenCaptureChanged(false)
     }
 
     private fun applyTransform(filter: SurfaceFilterRender, bounds: NormalizedRect) {
@@ -398,6 +460,15 @@ class StreamService : LifecycleService(), ConnectChecker {
                 if (scene.microphoneEnabled) result = result or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             }
             result
+        } else {
+            0
+        }
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, createNotification(text), serviceTypes)
+    }
+
+    private fun startForegroundForScreenPreview(text: String) {
+        val serviceTypes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         } else {
             0
         }
@@ -462,6 +533,13 @@ class StreamService : LifecycleService(), ConnectChecker {
         listener?.onStateChanged(false, currentStatus)
     }
 
+    private fun failScreenPreview(message: String) {
+        stopScreenCapture()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        listener?.onWarning(message)
+        stopSelf()
+    }
+
     override fun onConnectionStarted(url: String) {
         // Never expose or log `url`: it contains the private stream key.
     }
@@ -493,6 +571,7 @@ class StreamService : LifecycleService(), ConnectChecker {
     }
 
     companion object {
+        const val ACTION_PREPARE_SCREEN = "fr.nicovers06.streamstudio.action.PREPARE_SCREEN"
         const val ACTION_START = "fr.nicovers06.streamstudio.action.START_STREAM"
         const val ACTION_STOP = "fr.nicovers06.streamstudio.action.STOP_STREAM"
         const val EXTRA_ENDPOINT = "endpoint"

@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Nicovers06 Stream Studio</string>
     <string name="notification_channel">Diffusion en direct</string>
-    <string name="notification_title">Stream en cours</string>
+    <string name="notification_title">Stream Studio</string>
     <string name="notification_stop">Arrêter</string>
     <string name="studio_title">Stream Studio</string>
     <string name="studio_subtitle">Composez puis diffusez votre scène</string>
@@ -20,7 +20,8 @@
     <string name="select_screen_source_legacy">Choisir l’écran complet</string>
     <string name="change_screen_source">Modifier la source partagée</string>
     <string name="screen_source_missing">Aucune source sélectionnée</string>
-    <string name="screen_source_ready">Source sélectionnée · prête à diffuser</string>
+    <string name="screen_source_preparing">Ouverture de l’aperçu…</string>
+    <string name="screen_source_preview">Aperçu actif dans la scène · prêt à diffuser</string>
     <string name="screen_source_active">Partage d’écran actif</string>
     <string name="microphone">Microphone</string>
     <string name="camera">Caméra</string>

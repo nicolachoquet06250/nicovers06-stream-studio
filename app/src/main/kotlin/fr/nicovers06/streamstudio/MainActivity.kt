@@ -45,7 +45,8 @@ class MainActivity : Activity() {
     private var bound = false
     private var service: StreamService? = null
     private var pendingBroadcast: PendingBroadcast? = null
-    private var selectedProjectionData: Intent? = null
+    private var screenCapturePrepared = false
+    private var screenCapturePreparing = false
     private var permissionPurpose: PermissionPurpose? = null
     private var streaming = false
 
@@ -53,6 +54,12 @@ class MainActivity : Activity() {
         override fun onStateChanged(isStreaming: Boolean, status: String) = runOnUiThread {
             streaming = isStreaming
             updateStreamingUi(status)
+        }
+
+        override fun onScreenCaptureChanged(isReady: Boolean) = runOnUiThread {
+            screenCapturePrepared = isReady
+            screenCapturePreparing = false
+            updateScreenSelectionUi()
         }
 
         override fun onBitrateChanged(bitsPerSecond: Long) = runOnUiThread {
@@ -86,7 +93,10 @@ class MainActivity : Activity() {
         override fun onServiceDisconnected(name: ComponentName) {
             bound = false
             service = null
+            screenCapturePrepared = false
+            screenCapturePreparing = false
             binding.previewHint.visibility = View.VISIBLE
+            updateScreenSelectionUi()
         }
     }
 
@@ -161,7 +171,10 @@ class MainActivity : Activity() {
 
         screenSwitch.setOnCheckedChangeListener { _, enabled ->
             if (!rendering) {
-                if (!enabled) selectedProjectionData = null
+                if (!enabled) {
+                    screenCapturePrepared = false
+                    screenCapturePreparing = false
+                }
                 updateScene { it.copy(screen = it.screen.copy(enabled = enabled)) }
             }
         }
@@ -238,6 +251,13 @@ class MainActivity : Activity() {
         }
         rendering = false
         service?.applyScene(scene)
+        if (!scene.screen.enabled && !streaming &&
+            (screenCapturePrepared || screenCapturePreparing || service?.hasScreenCapture() == true)
+        ) {
+            screenCapturePrepared = false
+            screenCapturePreparing = false
+            service?.stopScreenPreview()
+        }
         updateStreamingUi(binding.statusText.text.toString())
     }
 
@@ -335,7 +355,11 @@ class MainActivity : Activity() {
             showMessage("Activez au moins une source visuelle")
             return
         }
-        if (scene.screen.enabled && selectedProjectionData == null) {
+        if (scene.screen.enabled && screenCapturePreparing) {
+            showMessage("Attendez que l’aperçu du partage d’écran soit prêt")
+            return
+        }
+        if (scene.screen.enabled && !screenCapturePrepared) {
             showMessage("Choisissez d’abord l’écran ou l’application à partager")
             binding.selectScreenButton.requestFocus()
             return
@@ -381,8 +405,7 @@ class MainActivity : Activity() {
 
     private fun startForegroundBroadcast() {
         val pending = pendingBroadcast ?: return
-        val projectionData = if (pending.scene.screen.enabled) selectedProjectionData else null
-        if (pending.scene.screen.enabled && projectionData == null) {
+        if (pending.scene.screen.enabled && !screenCapturePrepared) {
             pendingBroadcast = null
             showMessage("La source de partage d’écran n’est plus disponible. Sélectionnez-la à nouveau.")
             updateScreenSelectionUi()
@@ -392,13 +415,8 @@ class MainActivity : Activity() {
             .setAction(StreamService.ACTION_START)
             .putExtra(StreamService.EXTRA_ENDPOINT, pending.endpoint)
             .putExtra(StreamService.EXTRA_SCENE_JSON, pending.scene.toJson().toString())
-        if (projectionData != null) {
-            intent.putExtra(StreamService.EXTRA_PROJECTION_RESULT, RESULT_OK)
-            intent.putExtra(StreamService.EXTRA_PROJECTION_DATA, projectionData)
-        }
         ContextCompat.startForegroundService(this, intent)
         pendingBroadcast = null
-        selectedProjectionData = null
         streaming = true
         updateStreamingUi("CONNEXION…")
     }
@@ -435,9 +453,19 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQUEST_SCREEN_SELECTION) return
         if (resultCode == RESULT_OK && data != null) {
-            selectedProjectionData = data
+            screenCapturePreparing = true
             updateScreenSelectionUi()
-            showMessage("Source de partage d’écran sélectionnée")
+            val intent = Intent(this, StreamService::class.java)
+                .setAction(StreamService.ACTION_PREPARE_SCREEN)
+                .putExtra(StreamService.EXTRA_SCENE_JSON, currentScene().toJson().toString())
+                .putExtra(StreamService.EXTRA_PROJECTION_RESULT, RESULT_OK)
+                .putExtra(StreamService.EXTRA_PROJECTION_DATA, data)
+            runCatching { ContextCompat.startForegroundService(this, intent) }
+                .onFailure {
+                    screenCapturePreparing = false
+                    updateScreenSelectionUi()
+                    showMessage("Impossible d’ouvrir l’aperçu du partage d’écran")
+                }
         } else {
             showMessage("Sélection du partage d’écran annulée")
         }
@@ -466,16 +494,17 @@ class MainActivity : Activity() {
 
     private fun updateScreenSelectionUi() = with(binding) {
         val screenEnabled = currentScene().screen.enabled
-        val sourceSelected = selectedProjectionData != null
         val supportsSingleAppSharing = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+        sceneSpinner.isEnabled = !streaming && !screenCapturePreparing
+        screenSwitch.isEnabled = !streaming && !screenCapturePreparing
         screenOptions.visibility = if (screenEnabled) View.VISIBLE else View.GONE
         screenCaptureHelp.setText(
             if (supportsSingleAppSharing) R.string.screen_capture_help else R.string.screen_capture_help_legacy,
         )
-        selectScreenButton.isEnabled = screenEnabled && !streaming
+        selectScreenButton.isEnabled = screenEnabled && !streaming && !screenCapturePreparing
         selectScreenButton.text = getString(
             when {
-                sourceSelected -> R.string.change_screen_source
+                screenCapturePrepared -> R.string.change_screen_source
                 supportsSingleAppSharing -> R.string.select_screen_source
                 else -> R.string.select_screen_source_legacy
             },
@@ -483,14 +512,15 @@ class MainActivity : Activity() {
 
         val statusTextRes = when {
             streaming && screenEnabled -> R.string.screen_source_active
-            sourceSelected -> R.string.screen_source_ready
+            screenCapturePreparing -> R.string.screen_source_preparing
+            screenCapturePrepared -> R.string.screen_source_preview
             else -> R.string.screen_source_missing
         }
         screenSourceStatus.setText(statusTextRes)
         screenSourceStatus.setTextColor(
             ContextCompat.getColor(
                 this@MainActivity,
-                if (streaming && screenEnabled || sourceSelected) R.color.green else R.color.text_secondary,
+                if (streaming && screenEnabled || screenCapturePrepared) R.color.green else R.color.text_secondary,
             ),
         )
     }

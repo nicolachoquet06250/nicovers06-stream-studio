@@ -59,11 +59,12 @@ L’APK de debug est généré dans `app/build/outputs/apk/debug/app-debug.apk`.
 
 1. Activez les sources de la scène et positionnez les blocs écran/caméra/chat.
 2. Dans **Partage d’écran**, appuyez sur **Choisir l’écran ou l’application** et validez la source dans le sélecteur Android.
-3. Choisissez Twitch, YouTube ou une destination personnalisée.
-4. Vérifiez l’URL d’ingestion fournie par la plateforme et collez votre clé de stream.
-5. Appuyez sur **Démarrer le stream**, puis accordez les éventuelles autorisations caméra/microphone.
+3. Vérifiez immédiatement le contenu capturé dans le bloc **ÉCRAN** de la scène.
+4. Choisissez Twitch, YouTube ou une destination personnalisée.
+5. Vérifiez l’URL d’ingestion fournie par la plateforme et collez votre clé de stream.
+6. Appuyez sur **Démarrer le stream**, puis accordez les éventuelles autorisations caméra/microphone.
 
-La sélection de partage reste uniquement en mémoire et est consommée au lancement du stream. Android demande donc de sélectionner à nouveau la source avant chaque nouvelle diffusion.
+La session de partage reste uniquement en mémoire. Elle démarre dès la validation du sélecteur afin d’alimenter l’aperçu, puis la même session est réutilisée au lancement du stream. Android demande une nouvelle sélection après l’arrêt de cette session ou de la diffusion.
 
 Le partage d’une application isolée est proposé par le sélecteur système à partir d’Android 14. Sur Android 13 et antérieur, `MediaProjection` permet uniquement de sélectionner l’écran complet ; l’application l’indique directement sous la source.
 

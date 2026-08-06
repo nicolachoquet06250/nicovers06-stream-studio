@@ -146,7 +146,7 @@ class CameraOverlayPipeline(
             return
         }
 
-        val frame = runCatching { imageProxy.toBitmap().orient(imageProxy.imageInfo.rotationDegrees, facing == CameraFacing.FRONT) }
+        val frame = runCatching { imageProxy.toBitmap().mirrorIfNeeded(facing == CameraFacing.FRONT) }
             .getOrElse {
                 imageProxy.close()
                 processing.set(false)
@@ -186,16 +186,23 @@ class CameraOverlayPipeline(
             }
     }
 
-    private fun Bitmap.orient(rotationDegrees: Int, mirror: Boolean): Bitmap {
-        if (rotationDegrees == 0 && !mirror && config == Bitmap.Config.ARGB_8888) return this
-        val matrix = Matrix().apply {
-            postRotate(rotationDegrees.toFloat())
-            if (mirror) postScale(-1f, 1f)
+    private fun Bitmap.mirrorIfNeeded(mirror: Boolean): Bitmap {
+        if (!mirror && config == Bitmap.Config.ARGB_8888) return this
+        val mirrored = if (mirror) {
+            Bitmap.createBitmap(
+                this,
+                0,
+                0,
+                width,
+                height,
+                Matrix().apply { postScale(-1f, 1f) },
+                true,
+            ).also { if (it !== this) recycle() }
+        } else {
+            this
         }
-        val oriented = Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
-        if (oriented !== this) recycle()
-        if (oriented.config == Bitmap.Config.ARGB_8888) return oriented
-        return oriented.copy(Bitmap.Config.ARGB_8888, false).also { oriented.recycle() }
+        if (mirrored.config == Bitmap.Config.ARGB_8888) return mirrored
+        return mirrored.copy(Bitmap.Config.ARGB_8888, false).also { mirrored.recycle() }
     }
 
     private fun compositeBlur(foreground: Bitmap, mask: SegmentationMask): Bitmap {

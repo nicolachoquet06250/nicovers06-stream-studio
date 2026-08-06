@@ -12,13 +12,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Sends MediaProjection frames into a SurfaceFilterRender input surface.
  *
- * The surface belongs to StreamService so that a new projection can reuse the
- * same OpenGL filter after a broadcast is stopped and restarted.
+ * A MediaProjection token may create only one VirtualDisplay on Android 14+.
+ * The display therefore survives preview surface recreation and is detached or
+ * attached to the current OpenGL filter surface instead of being recreated.
  */
 class ScreenOverlayPipeline(
     context: Context,
     private val mediaProjection: MediaProjection,
-    private val outputSurface: Surface,
+    outputSurface: Surface,
     private val width: Int,
     private val height: Int,
     private val onProjectionStopped: () -> Unit,
@@ -30,6 +31,7 @@ class ScreenOverlayPipeline(
     private val stopNotified = AtomicBoolean(false)
     private var handler: Handler? = null
     private var virtualDisplay: VirtualDisplay? = null
+    private var outputSurface: Surface? = outputSurface
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -41,7 +43,8 @@ class ScreenOverlayPipeline(
 
     fun start(): Boolean {
         if (virtualDisplay != null) return true
-        if (released.get() || !outputSurface.isValid) return false
+        val surface = outputSurface ?: return false
+        if (released.get() || stopNotified.get() || !surface.isValid) return false
 
         worker.start()
         val workerHandler = Handler(worker.looper)
@@ -55,7 +58,7 @@ class ScreenOverlayPipeline(
                 height,
                 densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                outputSurface,
+                surface,
                 null,
                 workerHandler,
             ) ?: error("VirtualDisplay indisponible")
@@ -65,10 +68,27 @@ class ScreenOverlayPipeline(
         }.isSuccess
     }
 
+    fun attachSurface(surface: Surface): Boolean {
+        if (released.get() || stopNotified.get() || !surface.isValid) return false
+        if (outputSurface === surface && virtualDisplay != null) return true
+        outputSurface = surface
+        val display = virtualDisplay ?: return start()
+        return runCatching { display.setSurface(surface) }
+            .onFailure { onError("Surface de partage d’écran indisponible : ${it.message.orEmpty()}") }
+            .isSuccess
+    }
+
+    fun detachSurface() {
+        if (released.get()) return
+        runCatching { virtualDisplay?.setSurface(null) }
+        outputSurface = null
+    }
+
     fun release() {
         if (!released.compareAndSet(false, true)) return
         virtualDisplay?.release()
         virtualDisplay = null
+        outputSurface = null
         runCatching { mediaProjection.unregisterCallback(projectionCallback) }
         handler = null
         worker.quitSafely()
