@@ -9,12 +9,8 @@ permissions:
 
 jobs:
   test:
-    name: Tests
+    name: test
     runs-on: ubuntu-latest
-
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      should_run: ${{ steps.version.outputs.should_run }}
 
     steps:
       - uses: actions/checkout@v7
