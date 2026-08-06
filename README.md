@@ -2,6 +2,8 @@
 
 Studio de streaming **Android uniquement** permettant de composer une scène puis de la diffuser vers Twitch, YouTube ou un serveur RTMP(S) personnalisé.
 
+L'application de quickstart as été générée par [android-qs-app-generator](https://github.com/nicolachoquet06250/android-qs-app-generator).
+
 ## MVP implémenté
 
 - éditeur de scènes 16:9 avec création, sélection, suppression et persistance locale ;
