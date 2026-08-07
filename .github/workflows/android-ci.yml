@@ -5,7 +5,7 @@ on:
   pull_request:
 
 permissions:
-  contents: readwrite
+  contents: read
 
 jobs:
   test:
