@@ -40,7 +40,6 @@ La caméra est analysée avec une stratégie `KEEP_ONLY_LATEST`. En mode flou, l
 ## Compiler
 
 Prérequis :
-
 - JDK 17 complet ;
 - Android SDK 36 et Build Tools 36 ;
 - connexion à Google Maven, Maven Central et JitPack.
