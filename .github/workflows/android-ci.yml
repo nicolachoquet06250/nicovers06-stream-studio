@@ -42,22 +42,18 @@ jobs:
           fi
 
       - name: Configurer Java
-        if: steps.version.outputs.should_run == 'true'
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Configurer Gradle
-        if: steps.version.outputs.should_run == 'true'
         uses: gradle/actions/setup-gradle@v6
 
       - name: Autoriser l'exécution du wrapper Gradle
-        if: steps.version.outputs.should_run == 'true'
         run: chmod +x gradlew
 
       - name: Exécuter les tests unitaires
-        if: steps.version.outputs.should_run == 'true'
         run: ./gradlew :app:testDebugUnitTest
 
   build_debug_apk:
