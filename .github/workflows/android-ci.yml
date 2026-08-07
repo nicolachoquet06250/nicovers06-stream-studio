@@ -61,7 +61,7 @@ jobs:
   build_debug_apk:
     name: Build APK debug
     needs: test
-    if: needs.test.outputs.should_run == 'true'
+    if: needs.test.outputs.should_run == 'true' && github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
@@ -91,7 +91,7 @@ jobs:
   build_production_apk:
     name: Build APK de production
     needs: test
-    if: needs.test.outputs.should_run == 'true'
+    if: needs.test.outputs.should_run == 'true' && github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
