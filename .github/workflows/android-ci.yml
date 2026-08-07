@@ -2,6 +2,8 @@ name: Android CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
@@ -40,28 +42,24 @@ jobs:
           fi
 
       - name: Configurer Java
-        if: steps.version.outputs.should_run == 'true'
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Configurer Gradle
-        if: steps.version.outputs.should_run == 'true'
         uses: gradle/actions/setup-gradle@v6
 
       - name: Autoriser l'exécution du wrapper Gradle
-        if: steps.version.outputs.should_run == 'true'
         run: chmod +x gradlew
 
       - name: Exécuter les tests unitaires
-        if: steps.version.outputs.should_run == 'true'
         run: ./gradlew :app:testDebugUnitTest
 
   build_debug_apk:
     name: Build APK debug
     needs: test
-    if: needs.test.outputs.should_run == 'true'
+    if: needs.test.outputs.should_run == 'true' && github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
@@ -91,7 +89,7 @@ jobs:
   build_production_apk:
     name: Build APK de production
     needs: test
-    if: needs.test.outputs.should_run == 'true'
+    if: needs.test.outputs.should_run == 'true' && github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
