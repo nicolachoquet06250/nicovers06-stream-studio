@@ -11,6 +11,10 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    # Exposer les sorties du step "version" aux jobs suivants (needs.test.outputs.*)
+    outputs:
+      should_run: ${{ steps.version.outputs.should_run }}
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - uses: actions/checkout@v7
@@ -21,16 +25,18 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION="$(cat version)"
-          LATEST_TAG="$(git for-each-ref --count=1 --sort=-creatordate --format='%(refname:short)' refs/tags)"
+          VERSION="$(tr -d '[:space:]' < version)"
+          LATEST_TAG="$(git for-each-ref --count=1 --sort=-creatordate --format='%(refname:short)' refs/tags | tr -d '[:space:]')"
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Fichier version=$VERSION | dernier tag=$LATEST_TAG"
 
-          if [ "$VERSION" = "$LATEST_TAG" ]; then
+          if [ -n "$LATEST_TAG" ] && [ "$VERSION" = "$LATEST_TAG" ]; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             echo "::notice::La version $VERSION correspond déjà au dernier tag."
           else
             echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Nouvelle version $VERSION (dernier tag: ${LATEST_TAG:-aucun}) — suite du pipeline activée."
           fi
 
       - name: Configurer Java
