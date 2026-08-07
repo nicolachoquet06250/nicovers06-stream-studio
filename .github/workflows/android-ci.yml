@@ -105,16 +105,42 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleRelease
 
+      - name: Recréer le keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64_FILE }}
+        run: echo "$KEYSTORE_BASE64" | base64 --decode > release.keystore
+
+      - name: Signer l'APK de production
+        env:
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          KEY_PASS: ${{ secrets.KEY_PASS }}
+        shell: bash
+        run: |
+          APKSIGNER="$(find "${ANDROID_HOME:-$HOME/Android/Sdk}" -type f -path '*/build-tools/*/apksigner' 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$APKSIGNER" ]; then
+            echo "apksigner introuvable dans le SDK Android." >&2
+            exit 1
+          fi
+
+          "$APKSIGNER" sign \
+            --ks release.keystore \
+            --ks-key-alias "$KEYSTORE_ALIAS" \
+            --ks-pass pass:"$KEYSTORE_PASS" \
+            --key-pass pass:"$KEY_PASS" \
+            app/build/outputs/apk/release/app-release-unsigned.apk
+
       - name: Préparer l'APK de production
         shell: bash
         run: |
-          APK_PATH="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          APK_PATH="app/build/outputs/apk/release/app-release-unsigned.apk"
 
-          if [ -z "$APK_PATH" ]; then
+          if [ ! -f "$APK_PATH" ]; then
             echo "Aucun APK de production n'a été généré." >&2
             exit 1
           fi
 
+          # apksigner signe l'APK sur place (le nom de fichier reste *-unsigned.apk)
           cp "$APK_PATH" app-production.apk
 
       - name: Enregistrer l'APK de production

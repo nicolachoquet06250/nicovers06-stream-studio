@@ -7,6 +7,7 @@ L'application de quickstart as été générée par [android-qs-app-generator](h
 ## MVP implémenté
 
 - éditeur de scènes 16:9 avec création, sélection, suppression et persistance locale ;
+- interface sombre adaptative : panneaux côte à côte sur fenêtre large et empilés progressivement sur mobile, portrait ou fenêtre Samsung DeX réduite ;
 - blocs écran, caméra et chat déplaçables/redimensionnables directement dans l’aperçu ;
 - partage de l’écran ou d’une application via `MediaProjection`, composé dans le bloc écran ;
 - microphone, avec une vraie piste AAC silencieuse lorsqu’il est désactivé ;

@@ -193,12 +193,8 @@ class MainActivity : Activity() {
         chatSwitch.setOnCheckedChangeListener { _, enabled ->
             if (!rendering) updateScene { it.copy(chat = it.chat.copy(enabled = enabled)) }
         }
-        flipCameraButton.setOnClickListener {
-            updateScene {
-                val facing = if (it.camera.facing == CameraFacing.FRONT) CameraFacing.BACK else CameraFacing.FRONT
-                it.copy(camera = it.camera.copy(facing = facing))
-            }
-        }
+        frontCameraButton.setOnClickListener { selectCameraFacing(CameraFacing.FRONT) }
+        backCameraButton.setOnClickListener { selectCameraFacing(CameraFacing.BACK) }
         addChatMessageButton.setOnClickListener { addPreviewChatMessage() }
         streamButton.setOnClickListener {
             if (streaming || service?.isStreaming() == true) {
@@ -224,27 +220,24 @@ class MainActivity : Activity() {
         binding.chatSwitch.isChecked = scene.chat.enabled
         binding.cameraOptions.visibility = if (scene.camera.enabled) View.VISIBLE else View.GONE
         binding.chatOptions.visibility = if (scene.chat.enabled) View.VISIBLE else View.GONE
-        binding.flipCameraButton.text = if (scene.camera.facing == CameraFacing.FRONT) {
-            "Utiliser la caméra arrière"
-        } else {
-            "Utiliser la caméra avant"
-        }
+        binding.frontCameraButton.isSelected = scene.camera.facing == CameraFacing.FRONT
+        binding.backCameraButton.isSelected = scene.camera.facing == CameraFacing.BACK
         binding.screenBounds.bind(
             scene.screen.bounds,
             scene.screen.enabled,
-            "ÉCRAN",
+            "Partage d’écran",
             resizeFromTopRight = true,
         ) { bounds ->
             updateScene(debounceSave = true, render = false) {
                 it.copy(screen = it.screen.copy(bounds = bounds))
             }
         }
-        binding.cameraBounds.bind(scene.camera.bounds, scene.camera.enabled, "CAMÉRA") { bounds ->
+        binding.cameraBounds.bind(scene.camera.bounds, scene.camera.enabled, "Caméra") { bounds ->
             updateScene(debounceSave = true, render = false) {
                 it.copy(camera = it.camera.copy(bounds = bounds))
             }
         }
-        binding.chatBounds.bind(scene.chat.bounds, scene.chat.enabled, "CHAT") { bounds ->
+        binding.chatBounds.bind(scene.chat.bounds, scene.chat.enabled, "Chat du stream") { bounds ->
             updateScene(debounceSave = true, render = false) {
                 it.copy(chat = it.chat.copy(bounds = bounds))
             }
@@ -258,7 +251,18 @@ class MainActivity : Activity() {
             screenCapturePreparing = false
             service?.stopScreenPreview()
         }
+        updateActiveWidgetCount(scene)
         updateStreamingUi(binding.statusText.text.toString())
+    }
+
+    private fun selectCameraFacing(facing: CameraFacing) {
+        if (currentScene().camera.facing == facing) return
+        updateScene { it.copy(camera = it.camera.copy(facing = facing)) }
+    }
+
+    private fun updateActiveWidgetCount(scene: StreamScene) {
+        val count = listOf(scene.screen.enabled, scene.camera.enabled, scene.chat.enabled).count { it }
+        binding.activeWidgetsText.text = resources.getQuantityString(R.plurals.active_widgets_count, count, count)
     }
 
     private fun updateScene(
@@ -474,8 +478,7 @@ class MainActivity : Activity() {
     private fun updateStreamingUi(status: String) = with(binding) {
         statusText.text = status
         statusText.setTextColor(ContextCompat.getColor(this@MainActivity, if (status.startsWith("ERREUR")) R.color.red else R.color.green))
-        streamButton.text = if (streaming) "Arrêter le stream" else "Démarrer le stream"
-        streamButton.backgroundTintList = ContextCompat.getColorStateList(this@MainActivity, if (streaming) R.color.red else R.color.purple)
+        streamButton.text = if (streaming) "Arrêter le stream" else getString(R.string.start_stream)
 
         sceneSpinner.isEnabled = !streaming
         addSceneButton.isEnabled = !streaming
@@ -488,7 +491,8 @@ class MainActivity : Activity() {
         serverInput.isEnabled = !streaming
         streamKeyInput.isEnabled = !streaming
         blurSwitch.isEnabled = currentScene().camera.enabled
-        flipCameraButton.isEnabled = currentScene().camera.enabled
+        frontCameraButton.isEnabled = currentScene().camera.enabled
+        backCameraButton.isEnabled = currentScene().camera.enabled
         updateScreenSelectionUi()
     }
 
@@ -517,6 +521,10 @@ class MainActivity : Activity() {
             else -> R.string.screen_source_missing
         }
         screenSourceStatus.setText(statusTextRes)
+        screenSourceStatus.visibility = if (screenEnabled) View.VISIBLE else View.GONE
+        screenSourceStatus.setBackgroundResource(
+            if (streaming && screenEnabled || screenCapturePrepared) R.drawable.bg_status else R.drawable.bg_status_neutral,
+        )
         screenSourceStatus.setTextColor(
             ContextCompat.getColor(
                 this@MainActivity,
