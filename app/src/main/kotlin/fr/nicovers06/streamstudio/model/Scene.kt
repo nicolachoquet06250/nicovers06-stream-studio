@@ -41,7 +41,7 @@ enum class CameraFacing { FRONT, BACK }
 
 data class ScreenComponent(
     val enabled: Boolean = true,
-    val bounds: NormalizedRect = NormalizedRect(0f, 0f, 1f, 1f),
+    val bounds: NormalizedRect = NormalizedRect(0.01f, 0.02f, 0.72f, 0.96f),
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("enabled", enabled)
@@ -62,7 +62,7 @@ data class CameraComponent(
     val enabled: Boolean = true,
     val backgroundBlur: Boolean = true,
     val facing: CameraFacing = CameraFacing.FRONT,
-    val bounds: NormalizedRect = NormalizedRect(0.68f, 0.60f, 0.28f, 0.35f),
+    val bounds: NormalizedRect = NormalizedRect(0.02f, 0.64f, 0.30f, 0.32f),
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("enabled", enabled)
@@ -106,7 +106,7 @@ data class ChatMessage(
 
 data class ChatComponent(
     val enabled: Boolean = true,
-    val bounds: NormalizedRect = NormalizedRect(0.03f, 0.54f, 0.38f, 0.41f),
+    val bounds: NormalizedRect = NormalizedRect(0.74f, 0.02f, 0.25f, 0.96f),
     val messages: List<ChatMessage> = previewMessages(),
 ) {
     fun toJson(): JSONObject = JSONObject()

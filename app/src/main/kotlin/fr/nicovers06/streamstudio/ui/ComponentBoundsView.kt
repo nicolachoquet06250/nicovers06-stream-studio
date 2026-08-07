@@ -3,6 +3,7 @@ package fr.nicovers06.streamstudio.ui
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.RectF
 import android.util.AttributeSet
@@ -18,18 +19,26 @@ class ComponentBoundsView @JvmOverloads constructor(
 ) : View(context, attrs) {
     private val density = resources.displayMetrics.density
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF8B5CF6.toInt()
+        color = 0xFF9B8CFF.toInt()
         style = Paint.Style.STROKE
-        strokeWidth = 2f * density
+        strokeWidth = 1f * density
+        pathEffect = DashPathEffect(floatArrayOf(4f * density, 3f * density), 0f)
     }
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x198B5CF6 }
-    private val labelBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xE66D3FDB.toInt() }
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x0C6C5CE7 }
+    private val labelBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xF01A1737.toInt() }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textSize = 11f * resources.displayMetrics.scaledDensity
+        color = 0xFFB9AFFF.toInt()
+        textSize = 11f * density * resources.configuration.fontScale
         isFakeBoldText = true
     }
-    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val gripPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF816EF2.toInt() }
+    private val handleBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xE8172231.toInt() }
+    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 1.6f * density
+        strokeCap = Paint.Cap.ROUND
+    }
     private val drawingBounds = RectF()
 
     private var normalizedRect = NormalizedRect(0f, 0f, 0.3f, 0.3f)
@@ -59,17 +68,44 @@ class ComponentBoundsView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         drawingBounds.set(1f, 1f, width - 1f, height - 1f)
-        canvas.drawRoundRect(drawingBounds, 8f * density, 8f * density, fillPaint)
-        canvas.drawRoundRect(drawingBounds, 8f * density, 8f * density, borderPaint)
+        canvas.drawRoundRect(drawingBounds, 9f * density, 9f * density, fillPaint)
+        canvas.drawRoundRect(drawingBounds, 9f * density, 9f * density, borderPaint)
 
         val textWidth = labelPaint.measureText(componentLabel)
-        val labelHeight = 24f * density
-        canvas.drawRoundRect(0f, 0f, textWidth + 16f * density, labelHeight, 8f * density, 8f * density, labelBackgroundPaint)
-        canvas.drawText(componentLabel, 8f * density, 16.5f * density, labelPaint)
+        val labelHeight = 28f * density
+        val labelWidth = (textWidth + 34f * density).coerceAtMost(width - 36f * density)
+        canvas.drawRoundRect(0f, 0f, labelWidth, labelHeight, 8f * density, 8f * density, labelBackgroundPaint)
+        repeat(3) { row ->
+            repeat(2) { column ->
+                canvas.drawCircle(
+                    (9f + column * 5f) * density,
+                    (8.5f + row * 5f) * density,
+                    1.35f * density,
+                    gripPaint,
+                )
+            }
+        }
+        canvas.save()
+        canvas.clipRect(24f * density, 0f, labelWidth - 5f * density, labelHeight)
+        canvas.drawText(componentLabel, 24f * density, 19f * density, labelPaint)
+        canvas.restore()
 
-        val handleSize = 14f * density
-        val handleY = if (resizeFromTopRight) handleSize else height - handleSize
-        canvas.drawCircle(width - handleSize, handleY, 5f * density, handlePaint)
+        val handleSize = 30f * density
+        val handleLeft = width - handleSize - 2f * density
+        val handleTop = if (resizeFromTopRight) 2f * density else height - handleSize - 2f * density
+        canvas.drawRoundRect(
+            handleLeft,
+            handleTop,
+            width - 2f * density,
+            handleTop + handleSize,
+            7f * density,
+            7f * density,
+            handleBackgroundPaint,
+        )
+        val inset = 8f * density
+        canvas.drawLine(handleLeft + inset, handleTop + handleSize - inset, width - inset, handleTop + inset, handlePaint)
+        canvas.drawLine(width - inset, handleTop + inset, width - 14f * density, handleTop + inset, handlePaint)
+        canvas.drawLine(width - inset, handleTop + inset, width - inset, handleTop + 14f * density, handlePaint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {

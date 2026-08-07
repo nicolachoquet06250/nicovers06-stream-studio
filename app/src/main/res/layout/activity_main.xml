@@ -2,382 +2,472 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@drawable/bg_app"
     android:fillViewport="true"
-    android:overScrollMode="never">
+    android:overScrollMode="never"
+    android:scrollbarStyle="outsideOverlay">
 
-    <LinearLayout
+    <fr.nicovers06.streamstudio.ui.ResponsiveStudioLayout
+        android:id="@+id/responsiveStudioLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingStart="16dp"
-        android:paddingTop="18dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="32dp">
+        android:paddingStart="14dp"
+        android:paddingTop="14dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="28dp">
 
         <LinearLayout
+            android:id="@+id/editorPane"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="vertical">
 
             <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <Spinner
+                    android:id="@+id/sceneSpinner"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_input"
+                    android:popupBackground="@color/panel_alt"
+                    android:spinnerMode="dropdown" />
 
                 <TextView
+                    android:id="@+id/statusText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/studio_title"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_status"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:text="@string/status_ready"
+                    android:textColor="@color/green"
+                    android:textSize="11sp" />
+
+                <Button
+                    android:id="@+id/addSceneButton"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_icon_button"
+                    android:backgroundTint="@null"
+                    android:contentDescription="@string/add_scene"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:stateListAnimator="@null"
+                    android:text="@string/plus_symbol"
                     android:textColor="@color/text_primary"
-                    android:textSize="24sp"
-                    android:textStyle="bold" />
+                    android:textSize="22sp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:text="@string/studio_subtitle"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="13sp" />
+                <Button
+                    android:id="@+id/deleteSceneButton"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_icon_button_danger"
+                    android:backgroundTint="@null"
+                    android:contentDescription="@string/delete_scene"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:stateListAnimator="@null"
+                    android:text="@string/delete_symbol"
+                    android:textColor="@color/red"
+                    android:textSize="22sp" />
             </LinearLayout>
 
             <TextView
-                android:id="@+id/statusText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/bg_status"
-                android:text="@string/status_ready"
-                android:textColor="@color/green"
-                android:textSize="11sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:background="@drawable/bg_panel"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:padding="12dp">
-
-            <Spinner
-                android:id="@+id/sceneSpinner"
-                android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_weight="1"
-                android:background="@drawable/bg_input"
-                android:popupBackground="@color/panel_alt"
-                android:spinnerMode="dropdown" />
-
-            <Button
-                android:id="@+id/addSceneButton"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:layout_marginStart="8dp"
-                android:backgroundTint="@color/purple"
-                android:contentDescription="@string/add_scene"
-                android:minWidth="0dp"
-                android:text="@string/plus_symbol"
-                android:textColor="@color/text_primary"
-                android:textSize="22sp" />
-
-            <Button
-                android:id="@+id/deleteSceneButton"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:layout_marginStart="6dp"
-                android:backgroundTint="@color/panel_alt"
-                android:contentDescription="@string/delete_scene"
-                android:minWidth="0dp"
-                android:text="@string/delete_symbol"
-                android:textColor="@color/red"
-                android:textSize="22sp" />
-        </LinearLayout>
-
-        <fr.nicovers06.streamstudio.ui.AspectRatioFrameLayout
-            android:id="@+id/previewFrame"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/bg_preview"
-            android:clipChildren="true"
-            android:clipToPadding="true">
-
-            <TextureView
-                android:id="@+id/streamPreview"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-
-            <TextView
-                android:id="@+id/previewHint"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:gravity="center"
-                android:text="@string/preview_hint"
+                android:layout_marginTop="2dp"
+                android:layout_marginBottom="10dp"
+                android:text="@string/studio_subtitle"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 
-            <fr.nicovers06.streamstudio.ui.ComponentBoundsView
-                android:id="@+id/screenBounds"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-
-            <fr.nicovers06.streamstudio.ui.ComponentBoundsView
-                android:id="@+id/cameraBounds"
-                android:layout_width="120dp"
-                android:layout_height="100dp" />
-
-            <fr.nicovers06.streamstudio.ui.ComponentBoundsView
-                android:id="@+id/chatBounds"
-                android:layout_width="160dp"
-                android:layout_height="120dp" />
-        </fr.nicovers06.streamstudio.ui.AspectRatioFrameLayout>
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="22dp"
-            android:text="@string/sources_label"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/bg_panel"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <Switch
-                android:id="@+id/screenSwitch"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:buttonTint="@color/purple"
-                android:text="@string/screen_capture"
-                android:textColor="@color/text_primary"
-                android:textSize="15sp" />
-
-            <LinearLayout
-                android:id="@+id/screenOptions"
+            <fr.nicovers06.streamstudio.ui.AspectRatioFrameLayout
+                android:id="@+id/previewFrame"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="14dp"
-                android:layout_marginBottom="10dp"
-                android:orientation="vertical">
+                android:background="@drawable/bg_preview"
+                android:clipChildren="true"
+                android:clipToPadding="true"
+                android:padding="1dp">
+
+                <TextureView
+                    android:id="@+id/streamPreview"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
 
                 <TextView
-                    android:id="@+id/screenCaptureHelp"
-                    android:layout_width="match_parent"
+                    android:id="@+id/previewHint"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/screen_capture_help"
+                    android:layout_gravity="center"
+                    android:gravity="center"
+                    android:text="@string/preview_hint"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
-
-                <Button
-                    android:id="@+id/selectScreenButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:layout_marginTop="8dp"
-                    android:backgroundTint="@color/panel_alt"
-                    android:text="@string/select_screen_source"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text_primary" />
 
                 <TextView
                     android:id="@+id/screenSourceStatus"
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
+                    android:layout_gravity="bottom|end"
+                    android:layout_margin="12dp"
+                    android:background="@drawable/bg_status_neutral"
+                    android:fontFamily="sans-serif-medium"
                     android:text="@string/screen_source_missing"
                     android:textColor="@color/text_secondary"
-                    android:textSize="12sp" />
-            </LinearLayout>
+                    android:textSize="11sp" />
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="@color/border" />
+                <fr.nicovers06.streamstudio.ui.ComponentBoundsView
+                    android:id="@+id/screenBounds"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
 
-            <Switch
-                android:id="@+id/microphoneSwitch"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:text="@string/microphone"
-                android:textColor="@color/text_primary"
-                android:textSize="15sp" />
+                <fr.nicovers06.streamstudio.ui.ComponentBoundsView
+                    android:id="@+id/cameraBounds"
+                    android:layout_width="120dp"
+                    android:layout_height="100dp" />
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="@color/border" />
-
-            <Switch
-                android:id="@+id/cameraSwitch"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:text="@string/camera"
-                android:textColor="@color/text_primary"
-                android:textSize="15sp" />
+                <fr.nicovers06.streamstudio.ui.ComponentBoundsView
+                    android:id="@+id/chatBounds"
+                    android:layout_width="160dp"
+                    android:layout_height="120dp" />
+            </fr.nicovers06.streamstudio.ui.AspectRatioFrameLayout>
 
             <LinearLayout
-                android:id="@+id/cameraOptions"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="14dp"
-                android:orientation="vertical">
+                android:layout_height="52dp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_editor_footer"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp">
 
-                <Switch
-                    android:id="@+id/blurSwitch"
-                    android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:text="@string/background_blur"
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/preview_editor_help"
                     android:textColor="@color/text_secondary"
-                    android:textSize="14sp" />
+                    android:textSize="12sp" />
 
-                <Button
-                    android:id="@+id/flipCameraButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:backgroundTint="@color/panel_alt"
-                    android:text="@string/use_back_camera"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text_primary" />
-            </LinearLayout>
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="10dp"
-                android:background="@color/border" />
-
-            <Switch
-                android:id="@+id/chatSwitch"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:text="@string/chat_block"
-                android:textColor="@color/text_primary"
-                android:textSize="15sp" />
-
-            <LinearLayout
-                android:id="@+id/chatOptions"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="14dp"
-                android:orientation="vertical">
-
-                <EditText
-                    android:id="@+id/chatAuthorInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:background="@drawable/bg_input"
-                    android:hint="@string/chat_author_hint"
-                    android:importantForAutofill="no"
-                    android:inputType="textPersonName"
-                    android:maxLines="1"
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="@string/preview_format"
                     android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary" />
-
-                <EditText
-                    android:id="@+id/chatMessageInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="8dp"
-                    android:background="@drawable/bg_input"
-                    android:hint="@string/chat_message_hint"
-                    android:importantForAutofill="no"
-                    android:inputType="textCapSentences"
-                    android:maxLines="1"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary" />
-
-                <Button
-                    android:id="@+id/addChatMessageButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:layout_marginTop="8dp"
-                    android:backgroundTint="@color/panel_alt"
-                    android:text="@string/add_chat_message"
-                    android:textAllCaps="false"
-                    android:textColor="@color/text_primary" />
+                    android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="22dp"
-            android:text="@string/broadcast_label"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
         <LinearLayout
+            android:id="@+id/controlsPane"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/bg_panel"
+            android:background="@drawable/bg_sidebar"
             android:orientation="vertical"
-            android:padding="14dp">
-
-            <Spinner
-                android:id="@+id/platformSpinner"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:background="@drawable/bg_input"
-                android:popupBackground="@color/panel_alt"
-                android:spinnerMode="dropdown" />
-
-            <EditText
-                android:id="@+id/serverInput"
-                android:layout_width="match_parent"
-                android:layout_height="50dp"
-                android:layout_marginTop="10dp"
-                android:background="@drawable/bg_input"
-                android:hint="@string/server_url_hint"
-                android:importantForAutofill="no"
-                android:inputType="textUri"
-                android:maxLines="1"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary" />
-
-            <EditText
-                android:id="@+id/streamKeyInput"
-                android:layout_width="match_parent"
-                android:layout_height="50dp"
-                android:layout_marginTop="10dp"
-                android:background="@drawable/bg_input"
-                android:hint="@string/stream_key_hint"
-                android:importantForAutofill="no"
-                android:inputType="textPassword"
-                android:maxLines="1"
-                android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary" />
+            android:padding="12dp">
 
             <TextView
+                style="@style/StudioSectionTitle"
+                android:text="@string/live_controls" />
+
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/stream_key_notice"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_panel"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="@string/widgets_label"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@color/border_soft" />
+
+                <Switch
+                    android:id="@+id/screenSwitch"
+                    style="@style/StudioSwitch"
+                    android:drawableStart="@drawable/ic_screen"
+                    android:text="@string/screen_capture" />
+
+                <LinearLayout
+                    android:id="@+id/screenOptions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="10dp"
+                    android:orientation="vertical"
+                    android:paddingStart="34dp"
+                    android:paddingEnd="0dp">
+
+                    <TextView
+                        android:id="@+id/screenCaptureHelp"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/screen_capture_help"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/selectScreenButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="46dp"
+                        android:layout_marginTop="9dp"
+                        android:background="@drawable/bg_button_outline"
+                        android:backgroundTint="@null"
+                        android:drawableStart="@drawable/ic_shield_check"
+                        android:drawablePadding="8dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:minHeight="0dp"
+                        android:minWidth="0dp"
+                        android:stateListAnimator="@null"
+                        android:text="@string/select_screen_source"
+                        android:textAllCaps="false"
+                        android:textColor="@color/purple_light"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/border_soft" />
+
+                <Switch
+                    android:id="@+id/microphoneSwitch"
+                    style="@style/StudioSwitch"
+                    android:drawableStart="@drawable/ic_microphone"
+                    android:text="@string/microphone" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/border_soft" />
+
+                <Switch
+                    android:id="@+id/cameraSwitch"
+                    style="@style/StudioSwitch"
+                    android:drawableStart="@drawable/ic_camera"
+                    android:text="@string/camera" />
+
+                <LinearLayout
+                    android:id="@+id/cameraOptions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="10dp"
+                    android:orientation="vertical"
+                    android:paddingStart="34dp"
+                    android:paddingEnd="0dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="46dp"
+                        android:background="@drawable/bg_segment_container"
+                        android:orientation="horizontal"
+                        android:padding="2dp">
+
+                        <Button
+                            android:id="@+id/frontCameraButton"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_segment_button"
+                            android:backgroundTint="@null"
+                            android:fontFamily="sans-serif-medium"
+                            android:minHeight="0dp"
+                            android:minWidth="0dp"
+                            android:stateListAnimator="@null"
+                            android:text="@string/front_camera"
+                            android:textAllCaps="false"
+                            android:textColor="@color/segment_text"
+                            android:textSize="13sp" />
+
+                        <Button
+                            android:id="@+id/backCameraButton"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_segment_button"
+                            android:backgroundTint="@null"
+                            android:fontFamily="sans-serif-medium"
+                            android:minHeight="0dp"
+                            android:minWidth="0dp"
+                            android:stateListAnimator="@null"
+                            android:text="@string/back_camera"
+                            android:textAllCaps="false"
+                            android:textColor="@color/segment_text"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/blurSwitch"
+                        style="@style/StudioSwitch"
+                        android:layout_height="46dp"
+                        android:text="@string/background_blur"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/border_soft" />
+
+                <Switch
+                    android:id="@+id/chatSwitch"
+                    style="@style/StudioSwitch"
+                    android:drawableStart="@drawable/ic_chat"
+                    android:text="@string/chat_block" />
+
+                <LinearLayout
+                    android:id="@+id/chatOptions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="34dp"
+                    android:paddingEnd="0dp">
+
+                    <TextView
+                        style="@style/StudioFieldLabel"
+                        android:layout_marginBottom="6dp"
+                        android:text="@string/chat_preview_label" />
+
+                    <EditText
+                        android:id="@+id/chatAuthorInput"
+                        style="@style/StudioInput"
+                        android:hint="@string/chat_author_hint"
+                        android:importantForAutofill="no"
+                        android:inputType="textPersonName"
+                        android:maxLines="1" />
+
+                    <EditText
+                        android:id="@+id/chatMessageInput"
+                        style="@style/StudioInput"
+                        android:layout_marginTop="8dp"
+                        android:hint="@string/chat_message_hint"
+                        android:importantForAutofill="no"
+                        android:inputType="textCapSentences"
+                        android:maxLines="1" />
+
+                    <Button
+                        android:id="@+id/addChatMessageButton"
+                        style="@style/StudioButtonSecondary"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/add_chat_message" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_panel"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="@string/broadcast_label"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp" />
+
+                <TextView
+                    style="@style/StudioFieldLabel"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="5dp"
+                    android:text="@string/platform_label" />
+
+                <Spinner
+                    android:id="@+id/platformSpinner"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:background="@drawable/bg_input"
+                    android:popupBackground="@color/panel_alt"
+                    android:spinnerMode="dropdown" />
+
+                <TextView
+                    style="@style/StudioFieldLabel"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="5dp"
+                    android:text="@string/server_url_label" />
+
+                <EditText
+                    android:id="@+id/serverInput"
+                    style="@style/StudioInput"
+                    android:hint="@string/server_url_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri"
+                    android:maxLines="1" />
+
+                <TextView
+                    style="@style/StudioFieldLabel"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="5dp"
+                    android:text="@string/stream_key_label" />
+
+                <EditText
+                    android:id="@+id/streamKeyInput"
+                    style="@style/StudioInput"
+                    android:hint="@string/stream_key_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:maxLines="1" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/stream_key_notice"
+                    android:textColor="@color/text_muted"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/activeWidgetsText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="2dp"
+                android:layout_marginTop="14dp"
+                android:text="@string/active_widgets_default"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 
             <Button
                 android:id="@+id/streamButton"
                 android:layout_width="match_parent"
-                android:layout_height="54dp"
-                android:layout_marginTop="14dp"
-                android:backgroundTint="@color/purple"
+                android:layout_height="58dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_stream_button"
+                android:backgroundTint="@null"
+                android:drawableStart="@drawable/ic_broadcast"
+                android:drawablePadding="10dp"
+                android:fontFamily="sans-serif-medium"
+                android:minHeight="0dp"
+                android:minWidth="0dp"
+                android:stateListAnimator="@null"
                 android:text="@string/start_stream"
                 android:textAllCaps="false"
                 android:textColor="@color/text_primary"
-                android:textSize="16sp"
-                android:textStyle="bold" />
+                android:textSize="16sp" />
         </LinearLayout>
-    </LinearLayout>
+    </fr.nicovers06.streamstudio.ui.ResponsiveStudioLayout>
 </ScrollView>
