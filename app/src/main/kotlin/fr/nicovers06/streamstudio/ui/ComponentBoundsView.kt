@@ -48,12 +48,18 @@ class ComponentBoundsView @JvmOverloads constructor(
     private var lastRawX = 0f
     private var lastRawY = 0f
     private var resizing = false
+    /**
+     * Ratio pixels largeur/hauteur à conserver pendant le resize.
+     * `0f` = redimensionnement libre (le flux sera cropé côté composition).
+     */
+    private var lockedPixelAspect: Float = 0f
 
     fun bind(
         rect: NormalizedRect,
         visible: Boolean,
         label: String,
         resizeFromTopRight: Boolean = false,
+        keepAspectRatio: Boolean = false,
         listener: (NormalizedRect) -> Unit,
     ) {
         normalizedRect = rect.constrained()
@@ -61,6 +67,14 @@ class ComponentBoundsView @JvmOverloads constructor(
         this.resizeFromTopRight = resizeFromTopRight
         onBoundsChanged = listener
         visibility = if (visible) VISIBLE else GONE
+        lockedPixelAspect = if (keepAspectRatio) {
+            val parentView = parent as? View
+            val pw = (parentView?.width ?: 0).coerceAtLeast(1)
+            val ph = (parentView?.height ?: 0).coerceAtLeast(1)
+            normalizedRect.pixelAspect(pw, ph)
+        } else {
+            0f
+        }
         post(::applyLayout)
         invalidate()
     }
@@ -130,18 +144,7 @@ class ComponentBoundsView @JvmOverloads constructor(
                 val dx = (event.rawX - lastRawX) / parentView.width.toFloat()
                 val dy = (event.rawY - lastRawY) / parentView.height.toFloat()
                 normalizedRect = if (resizing) {
-                    if (resizeFromTopRight) {
-                        normalizedRect.copy(
-                            y = normalizedRect.y + dy,
-                            width = normalizedRect.width + dx,
-                            height = normalizedRect.height - dy,
-                        ).constrained()
-                    } else {
-                        normalizedRect.copy(
-                            width = normalizedRect.width + dx,
-                            height = normalizedRect.height + dy,
-                        ).constrained()
-                    }
+                    resizeRect(dx, dy, parentView.width, parentView.height)
                 } else {
                     normalizedRect.copy(
                         x = normalizedRect.x + dx,
@@ -162,6 +165,47 @@ class ComponentBoundsView @JvmOverloads constructor(
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    private fun resizeRect(dx: Float, dy: Float, parentW: Int, parentH: Int): NormalizedRect {
+        val aspect = lockedPixelAspect
+        if (aspect <= 0f) {
+            return if (resizeFromTopRight) {
+                normalizedRect.copy(
+                    y = normalizedRect.y + dy,
+                    width = normalizedRect.width + dx,
+                    height = normalizedRect.height - dy,
+                ).constrained()
+            } else {
+                normalizedRect.copy(
+                    width = normalizedRect.width + dx,
+                    height = normalizedRect.height + dy,
+                ).constrained()
+            }
+        }
+
+        // Conserves le ratio pixels : nh = nw * parentW / (aspect * parentH)
+        val heightFromWidth: (Float) -> Float = { nw ->
+            (nw * parentW.toFloat()) / (aspect * parentH.toFloat())
+        }
+
+        return if (resizeFromTopRight) {
+            val newWidth = (normalizedRect.width + dx).coerceAtLeast(0.12f)
+            val newHeight = heightFromWidth(newWidth).coerceAtLeast(0.12f)
+            val bottom = normalizedRect.y + normalizedRect.height
+            normalizedRect.copy(
+                y = bottom - newHeight,
+                width = newWidth,
+                height = newHeight,
+            ).constrained()
+        } else {
+            val newWidth = (normalizedRect.width + dx).coerceAtLeast(0.12f)
+            val newHeight = heightFromWidth(newWidth).coerceAtLeast(0.12f)
+            normalizedRect.copy(
+                width = newWidth,
+                height = newHeight,
+            ).constrained()
+        }
     }
 
     override fun performClick(): Boolean {

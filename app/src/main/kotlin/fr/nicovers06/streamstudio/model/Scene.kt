@@ -21,6 +21,16 @@ data class NormalizedRect(
         )
     }
 
+    /**
+     * Ratio largeur/hauteur du rectangle en pixels d'une sc?ne [sceneWidth]?[sceneHeight].
+     */
+    fun pixelAspect(sceneWidth: Int, sceneHeight: Int): Float {
+        val safe = constrained()
+        val w = (safe.width * sceneWidth).coerceAtLeast(1f)
+        val h = (safe.height * sceneHeight).coerceAtLeast(1f)
+        return w / h
+    }
+
     fun toJson(): JSONObject = JSONObject()
         .put("x", x.toDouble())
         .put("y", y.toDouble())
@@ -42,10 +52,13 @@ enum class CameraFacing { FRONT, BACK }
 data class ScreenComponent(
     val enabled: Boolean = true,
     val bounds: NormalizedRect = NormalizedRect(0.01f, 0.02f, 0.72f, 0.96f),
+    /** Verrouille le ratio du cadre au redimensionnement. */
+    val keepAspectRatio: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("enabled", enabled)
         .put("bounds", bounds.toJson())
+        .put("keepAspectRatio", keepAspectRatio)
 
     companion object {
         fun fromJson(json: JSONObject, legacyEnabled: Boolean = true): ScreenComponent {
@@ -53,6 +66,7 @@ data class ScreenComponent(
             return ScreenComponent(
                 enabled = json.optBoolean("enabled", defaults.enabled),
                 bounds = NormalizedRect.fromJson(json.optJSONObject("bounds") ?: JSONObject(), defaults.bounds),
+                keepAspectRatio = json.optBoolean("keepAspectRatio", defaults.keepAspectRatio),
             )
         }
     }
@@ -63,12 +77,15 @@ data class CameraComponent(
     val backgroundBlur: Boolean = true,
     val facing: CameraFacing = CameraFacing.FRONT,
     val bounds: NormalizedRect = NormalizedRect(0.02f, 0.64f, 0.30f, 0.32f),
+    /** Verrouille le ratio du cadre au redimensionnement. */
+    val keepAspectRatio: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("enabled", enabled)
         .put("backgroundBlur", backgroundBlur)
         .put("facing", facing.name)
         .put("bounds", bounds.toJson())
+        .put("keepAspectRatio", keepAspectRatio)
 
     companion object {
         fun fromJson(json: JSONObject): CameraComponent {
@@ -80,6 +97,7 @@ data class CameraComponent(
                     CameraFacing.valueOf(json.optString("facing", defaults.facing.name))
                 }.getOrDefault(defaults.facing),
                 bounds = NormalizedRect.fromJson(json.optJSONObject("bounds") ?: JSONObject(), defaults.bounds),
+                keepAspectRatio = json.optBoolean("keepAspectRatio", defaults.keepAspectRatio),
             )
         }
     }
@@ -149,7 +167,14 @@ data class StreamScene(
     val microphoneEnabled: Boolean = true,
     val camera: CameraComponent = CameraComponent(),
     val chat: ChatComponent = ChatComponent(),
+    /**
+     * Ordre de superposition des widgets visuels.
+     * Index 0 = le plus devant (premier de la liste sidebar).
+     */
+    val layerOrder: List<WidgetType> = WidgetModules.defaultLayerOrder,
 ) {
+    fun normalizedLayerOrder(): List<WidgetType> = WidgetModules.normalizeLayerOrder(layerOrder)
+
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
         .put("name", name)
@@ -157,10 +182,23 @@ data class StreamScene(
         .put("microphoneEnabled", microphoneEnabled)
         .put("camera", camera.toJson())
         .put("chat", chat.toJson())
+        .put(
+            "layerOrder",
+            JSONArray().apply { normalizedLayerOrder().forEach { put(it.name) } },
+        )
 
     companion object {
         fun fromJson(json: JSONObject): StreamScene {
             val legacyScreenEnabled = json.optBoolean("screenEnabled", true)
+            val storedOrder = json.optJSONArray("layerOrder")
+            val parsedOrder = buildList {
+                if (storedOrder != null) {
+                    for (index in 0 until storedOrder.length()) {
+                        val raw = storedOrder.optString(index)
+                        runCatching { WidgetType.valueOf(raw) }.getOrNull()?.let { add(it) }
+                    }
+                }
+            }
             return StreamScene(
                 id = json.optString("id").ifBlank { UUID.randomUUID().toString() },
                 name = json.optString("name", "Scène"),
@@ -171,6 +209,7 @@ data class StreamScene(
                 microphoneEnabled = json.optBoolean("microphoneEnabled", true),
                 camera = CameraComponent.fromJson(json.optJSONObject("camera") ?: JSONObject()),
                 chat = ChatComponent.fromJson(json.optJSONObject("chat") ?: JSONObject()),
+                layerOrder = WidgetModules.normalizeLayerOrder(parsedOrder),
             )
         }
     }
