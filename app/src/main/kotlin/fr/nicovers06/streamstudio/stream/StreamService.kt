@@ -15,7 +15,6 @@ import android.graphics.SurfaceTexture
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Binder
-import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -38,6 +37,7 @@ import fr.nicovers06.streamstudio.model.NormalizedRect
 import fr.nicovers06.streamstudio.model.StreamScene
 import fr.nicovers06.streamstudio.model.WidgetModules
 import fr.nicovers06.streamstudio.model.WidgetType
+import fr.nicovers06.streamstudio.platform.AndroidCapabilities
 import fr.nicovers06.streamstudio.stream.chat.LiveChatConfig
 import fr.nicovers06.streamstudio.stream.chat.LiveChatCoordinator
 import fr.nicovers06.streamstudio.stream.chat.LiveChatPlatform
@@ -589,10 +589,10 @@ class StreamService : LifecycleService(), ConnectChecker {
     }
 
     private fun startForegroundFor(scene: StreamScene, text: String) {
-        val serviceTypes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val serviceTypes = if (AndroidCapabilities.supportsMediaProjectionForegroundServiceType()) {
             var result = 0
             if (scene.screen.enabled) result = result or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (AndroidCapabilities.supportsCameraAndMicrophoneForegroundServiceTypes()) {
                 if (scene.camera.enabled) result = result or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
                 if (scene.microphoneEnabled) result = result or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             }
@@ -604,7 +604,7 @@ class StreamService : LifecycleService(), ConnectChecker {
     }
 
     private fun startForegroundForScreenPreview(text: String) {
-        val serviceTypes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val serviceTypes = if (AndroidCapabilities.supportsMediaProjectionForegroundServiceType()) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         } else {
             0
@@ -637,7 +637,7 @@ class StreamService : LifecycleService(), ConnectChecker {
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (AndroidCapabilities.supportsNotificationChannels()) {
             notificationManager.createNotificationChannel(
                 NotificationChannel(
                     NOTIFICATION_CHANNEL_ID,

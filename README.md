@@ -42,6 +42,15 @@ RTMP ou RTMPS
 
 La caméra est analysée avec une stratégie `KEEP_ONLY_LATEST`. En mode flou, le masque ML Kit est lissé puis utilisé pour mélanger le sujet original avec une version réellement floutée du décor. Le résultat final est écrit dans la surface du bloc caméra : c’est donc bien le flux modifié, et non la caméra brute, qui est transmis dans la scène.
 
+## Compatibilité Android
+
+- Android 7.0 (API 24) et Android 7.1 (API 25) sont les versions minimales prises en charge ;
+- sur Android 7 à 13, le partage utilise l’écran complet, le choix d’une application isolée restant réservé au sélecteur Android 14+ ;
+- les notification channels, permissions de notifications et types de foreground service sont activés uniquement à partir des API qui les fournissent ;
+- si le moteur de segmentation ou de flou est indisponible sur un ancien appareil, la caméra continue à fonctionner sans flou au lieu d’interrompre l’aperçu ou le stream.
+
+Les profils H.264 disponibles dépendent du matériel. Un test sur appareil réel reste recommandé pour confirmer l’encodage 720p et les performances du flou sur les appareils Android 7.
+
 ## Compiler
 
 Prérequis :
