@@ -34,6 +34,7 @@ import fr.nicovers06.streamstudio.model.StreamScene
 import fr.nicovers06.streamstudio.model.WidgetModule
 import fr.nicovers06.streamstudio.model.WidgetModules
 import fr.nicovers06.streamstudio.model.WidgetType
+import fr.nicovers06.streamstudio.platform.AndroidCapabilities
 import fr.nicovers06.streamstudio.stream.StreamService
 import fr.nicovers06.streamstudio.stream.chat.LiveChatConfig
 import fr.nicovers06.streamstudio.stream.chat.LiveChatPlatform
@@ -706,7 +707,7 @@ class MainActivity : Activity() {
             if (scene.microphoneEnabled && ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 add(Manifest.permission.RECORD_AUDIO)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            if (AndroidCapabilities.requiresNotificationPermission() &&
                 ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
             ) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
@@ -826,7 +827,7 @@ class MainActivity : Activity() {
 
     private fun updateScreenSelectionUi() = with(binding) {
         val screenEnabled = currentScene().screen.enabled
-        val supportsSingleAppSharing = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+        val supportsSingleAppSharing = AndroidCapabilities.supportsSingleAppScreenSharing()
         sceneSpinner.isEnabled = !streaming && !screenCapturePreparing
         screenSwitch.isEnabled = !streaming && !screenCapturePreparing
         screenOptions.visibility = if (screenEnabled) View.VISIBLE else View.GONE

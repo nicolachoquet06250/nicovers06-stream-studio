@@ -33,6 +33,7 @@ import com.google.mlkit.vision.segmentation.Segmentation
 import com.google.mlkit.vision.segmentation.SegmentationMask
 import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
 import fr.nicovers06.streamstudio.model.CameraFacing
+import fr.nicovers06.streamstudio.platform.AndroidCapabilities
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
@@ -52,17 +53,24 @@ class CameraOverlayPipeline(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val analyzerExecutor = Executors.newSingleThreadExecutor()
     private val processing = AtomicBoolean(false)
+    private val blurFallbackNotified = AtomicBoolean(false)
     @Suppress("DEPRECATION")
-    private val renderScript = RenderScript.create(context.applicationContext)
+    private val renderScript = runCatching { RenderScript.create(context.applicationContext) }.getOrNull()
     @Suppress("DEPRECATION")
-    private val blurScript = ScriptIntrinsicBlur.create(renderScript, Element.U8_4(renderScript)).apply {
-        setRadius(14f)
+    private val blurScript = renderScript?.let { scriptContext ->
+        runCatching {
+            ScriptIntrinsicBlur.create(scriptContext, Element.U8_4(scriptContext)).apply {
+                setRadius(14f)
+            }
+        }.getOrNull()
     }
-    private val segmenter = Segmentation.getClient(
-        SelfieSegmenterOptions.Builder()
-            .setDetectorMode(SelfieSegmenterOptions.STREAM_MODE)
-            .build(),
-    )
+    private val segmenter = runCatching {
+        Segmentation.getClient(
+            SelfieSegmenterOptions.Builder()
+                .setDetectorMode(SelfieSegmenterOptions.STREAM_MODE)
+                .build(),
+        )
+    }.getOrNull()
 
     @Volatile private var running = false
     @Volatile private var blurEnabled = true
@@ -134,11 +142,11 @@ class CameraOverlayPipeline(
 
     fun release() {
         stop()
-        segmenter.close()
+        segmenter?.close()
         @Suppress("DEPRECATION")
-        blurScript.destroy()
+        blurScript?.destroy()
         @Suppress("DEPRECATION")
-        renderScript.destroy()
+        renderScript?.destroy()
         analyzerExecutor.shutdown()
         outputSurface.release()
     }
@@ -191,13 +199,17 @@ class CameraOverlayPipeline(
             }
         imageProxy.close()
 
-        if (!blurEnabled) {
+        val activeSegmenter = segmenter
+        if (!blurEnabled || activeSegmenter == null || renderScript == null || blurScript == null) {
+            if (blurEnabled && blurFallbackNotified.compareAndSet(false, true)) {
+                onError("Flou indisponible sur cet appareil : la caméra reste active sans flou")
+            }
             render(frame)
             return
         }
 
         var handedToRenderer = false
-        segmenter.process(InputImage.fromBitmap(frame, 0))
+        activeSegmenter.process(InputImage.fromBitmap(frame, 0))
             .addOnSuccessListener(analyzerExecutor) { mask ->
                 handedToRenderer = true
                 if (running) {
@@ -280,6 +292,8 @@ class CameraOverlayPipeline(
 
     @Suppress("DEPRECATION")
     private fun createBlurredBitmap(source: Bitmap): Bitmap {
+        val scriptContext = renderScript ?: return source.copy(Bitmap.Config.ARGB_8888, false)
+        val script = blurScript ?: return source.copy(Bitmap.Config.ARGB_8888, false)
         // Blur at half resolution, then upscale. This reduces GPU/CPU work while
         // producing the softer background expected from a portrait-mode blur.
         val smallWidth = max(1, source.width / 2)
@@ -287,18 +301,18 @@ class CameraOverlayPipeline(
         val small = Bitmap.createScaledBitmap(source, smallWidth, smallHeight, true)
             .copy(Bitmap.Config.ARGB_8888, true)
         val blurredSmall = Bitmap.createBitmap(smallWidth, smallHeight, Bitmap.Config.ARGB_8888)
-        val input = Allocation.createFromBitmap(renderScript, small)
-        val output = Allocation.createFromBitmap(renderScript, blurredSmall)
-        try {
-            blurScript.setInput(input)
-            blurScript.forEach(output)
+        val input = Allocation.createFromBitmap(scriptContext, small)
+        val output = Allocation.createFromBitmap(scriptContext, blurredSmall)
+        return try {
+            script.setInput(input)
+            script.forEach(output)
             output.copyTo(blurredSmall)
+            val scaled = Bitmap.createScaledBitmap(blurredSmall, source.width, source.height, true)
+            if (scaled === blurredSmall) blurredSmall.copy(Bitmap.Config.ARGB_8888, false) else scaled
         } finally {
             input.destroy()
             output.destroy()
             small.recycle()
-        }
-        return Bitmap.createScaledBitmap(blurredSmall, source.width, source.height, true).also {
             blurredSmall.recycle()
         }
     }
@@ -352,7 +366,7 @@ class CameraOverlayPipeline(
             if (!outputSurface.isValid) return@post
             val canvas = runCatching { outputSurface.lockCanvas(null) }.getOrNull() ?: return@post
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                if (AndroidCapabilities.supportsModernCanvasClear()) {
                     canvas.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
                 } else {
                     @Suppress("DEPRECATION")
