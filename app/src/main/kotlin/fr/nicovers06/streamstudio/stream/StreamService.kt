@@ -32,6 +32,9 @@ import com.pedro.encoder.input.sources.video.NoVideoSource
 import com.pedro.library.generic.GenericStream
 import fr.nicovers06.streamstudio.MainActivity
 import fr.nicovers06.streamstudio.R
+import fr.nicovers06.streamstudio.data.SceneImageStore
+import fr.nicovers06.streamstudio.model.ImageComponent
+import fr.nicovers06.streamstudio.model.LayerRef
 import fr.nicovers06.streamstudio.model.ChatMessage
 import fr.nicovers06.streamstudio.model.NormalizedRect
 import fr.nicovers06.streamstudio.model.StreamScene
@@ -41,6 +44,7 @@ import fr.nicovers06.streamstudio.platform.AndroidCapabilities
 import fr.nicovers06.streamstudio.stream.chat.LiveChatConfig
 import fr.nicovers06.streamstudio.stream.chat.LiveChatCoordinator
 import fr.nicovers06.streamstudio.stream.chat.LiveChatPlatform
+import java.util.concurrent.ConcurrentHashMap
 
 class StreamService : LifecycleService(), ConnectChecker {
     interface Listener {
@@ -70,10 +74,13 @@ class StreamService : LifecycleService(), ConnectChecker {
     private var mediaProjection: MediaProjection? = null
     private var currentScene = StreamScene()
     private var filtersAdded = false
-    private var installedLayerOrder: List<WidgetType> = emptyList()
+    private var installedLayerOrder: List<LayerRef> = emptyList()
     private var screenFilter: SurfaceFilterRender? = null
     private var cameraFilter: SurfaceFilterRender? = null
     private var chatFilter: SurfaceFilterRender? = null
+    private val imageFilters = linkedMapOf<String, SurfaceFilterRender>()
+    private val imageRenderers = linkedMapOf<String, ImageOverlayRenderer>()
+    private val imageBitmapCache = ConcurrentHashMap<String, android.graphics.Bitmap>()
     private var screenSurface: Surface? = null
     private var screenPipeline: ScreenOverlayPipeline? = null
     private var cameraPipeline: CameraOverlayPipeline? = null
@@ -157,7 +164,12 @@ class StreamService : LifecycleService(), ConnectChecker {
     fun applyScene(scene: StreamScene) {
         currentScene = scene
         val layerOrder = scene.normalizedLayerOrder()
-        if (filtersAdded && installedLayerOrder != layerOrder) {
+        val imageIds = scene.images.map { it.id }.toSet()
+        val installedImageIds = imageFilters.keys.toSet()
+        val needReinstall = filtersAdded && (
+            installedLayerOrder != layerOrder || installedImageIds != imageIds
+        )
+        if (needReinstall) {
             reinstallFilters(layerOrder)
         }
         if (scene.screen.enabled && mediaProjection != null) {
@@ -177,6 +189,12 @@ class StreamService : LifecycleService(), ConnectChecker {
             applyTransform(it, scene.chat.bounds)
             it.setAlpha(if (scene.chat.enabled) 1f else 0f)
         }
+        scene.images.forEach { image ->
+            imageFilters[image.id]?.let { filter ->
+                applyTransform(filter, image.bounds)
+                filter.setAlpha(if (image.enabled) 1f else 0f)
+            }
+        }
 
         cameraPipeline?.let { pipeline ->
             if (scene.camera.enabled) {
@@ -187,6 +205,7 @@ class StreamService : LifecycleService(), ConnectChecker {
             }
         }
         refreshChatOverlay()
+        refreshImageOverlays()
         syncLiveChat()
     }
 
@@ -218,6 +237,7 @@ class StreamService : LifecycleService(), ConnectChecker {
             screenFilter = null
             cameraFilter = null
             chatFilter = null
+            imageFilters.clear()
         }
     }
 
@@ -239,6 +259,7 @@ class StreamService : LifecycleService(), ConnectChecker {
             screenFilter = null
             cameraFilter = null
             chatFilter = null
+            imageFilters.clear()
         }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         currentStatus = "PRÊT"
@@ -361,16 +382,18 @@ class StreamService : LifecycleService(), ConnectChecker {
      * Réinstalle les filtres GL dans l’ordre back→front dérivé de [layerOrderFrontFirst].
      * removeFilter libère les ressources GL : de nouvelles instances SurfaceFilterRender sont créées.
      */
-    private fun reinstallFilters(layerOrderFrontFirst: List<WidgetType>) {
+    private fun reinstallFilters(layerOrderFrontFirst: List<LayerRef>) {
         if (!prepared || !::stream.isInitialized) return
         val gl = stream.getGlInterface()
         screenFilter?.let { runCatching { gl.removeFilter(it) } }
         cameraFilter?.let { runCatching { gl.removeFilter(it) } }
         chatFilter?.let { runCatching { gl.removeFilter(it) } }
+        imageFilters.values.forEach { runCatching { gl.removeFilter(it) } }
         screenFilter = null
         cameraFilter = null
         chatFilter = null
-        // Pipelines rattachés via SurfaceReadyCallback des nouveaux filtres.
+        imageFilters.clear()
+        // Pipelines rattach?s via SurfaceReadyCallback des nouveaux filtres.
         releaseOverlayPipelines(keepScreenCapture = mediaProjection != null)
         createOverlayFilters()
         installFiltersInOrder(layerOrderFrontFirst)
@@ -412,15 +435,33 @@ class StreamService : LifecycleService(), ConnectChecker {
             chatRenderer = ChatOverlayRenderer(texture)
             applyScene(currentScene)
         })
+        currentScene.images.forEach { image ->
+            imageFilters[image.id] = createImageFilter(image)
+        }
     }
 
-    private fun installFiltersInOrder(layerOrderFrontFirst: List<WidgetType>) {
+    private fun createImageFilter(image: ImageComponent): SurfaceFilterRender {
+        val imageId = image.id
+        return SurfaceFilterRender(SurfaceFilterRender.SurfaceReadyCallback { texture: SurfaceTexture ->
+            val component = currentScene.image(imageId) ?: image
+            val (iw, ih) = surfaceSizeForBounds(component.bounds)
+            texture.setDefaultBufferSize(iw, ih)
+            imageRenderers.remove(imageId)?.release()
+            val renderer = ImageOverlayRenderer(texture, iw, ih)
+            imageRenderers[imageId] = renderer
+            bindImageBitmap(component, renderer)
+            renderer.update(component.enabled, component.keepAspectRatio)
+            applyScene(currentScene)
+        })
+    }
+
+    private fun installFiltersInOrder(layerOrderFrontFirst: List<LayerRef>) {
         val gl = stream.getGlInterface()
-        val order = WidgetModules.visualLayerOrder(layerOrderFrontFirst)
-        // GL : premier ajouté = fond ; dernier = devant → inverser la liste UI (front→back).
-        order.asReversed().forEach { type ->
-            val filter = filterFor(type) ?: return@forEach
-            when (type) {
+        val order = WidgetModules.visualLayerOrder(layerOrderFrontFirst, currentScene)
+        // GL : premier ajout? = fond ; dernier = devant ? inverser la liste UI (front?back).
+        order.asReversed().forEach { ref ->
+            val filter = filterFor(ref) ?: return@forEach
+            when (ref.type) {
                 WidgetType.SCREEN -> {
                     applyTransform(filter, currentScene.screen.bounds)
                     filter.setAlpha(0f)
@@ -433,16 +474,24 @@ class StreamService : LifecycleService(), ConnectChecker {
                     applyTransform(filter, currentScene.chat.bounds)
                     filter.setAlpha(if (currentScene.chat.enabled) 1f else 0f)
                 }
+                WidgetType.IMAGE -> {
+                    val image = currentScene.image(ref.instanceId.orEmpty())
+                    if (image != null) {
+                        applyTransform(filter, image.bounds)
+                        filter.setAlpha(if (image.enabled) 1f else 0f)
+                    }
+                }
                 WidgetType.MICROPHONE -> Unit
             }
             gl.addFilter(filter)
         }
     }
 
-    private fun filterFor(type: WidgetType): SurfaceFilterRender? = when (type) {
+    private fun filterFor(ref: LayerRef): SurfaceFilterRender? = when (ref.type) {
         WidgetType.SCREEN -> screenFilter
         WidgetType.CAMERA -> cameraFilter
         WidgetType.CHAT -> chatFilter
+        WidgetType.IMAGE -> imageFilters[ref.instanceId]
         WidgetType.MICROPHONE -> null
     }
 
@@ -459,6 +508,40 @@ class StreamService : LifecycleService(), ConnectChecker {
         cameraPipeline = null
         chatRenderer?.release()
         chatRenderer = null
+        imageRenderers.values.forEach { it.release() }
+        imageRenderers.clear()
+    }
+
+    private fun refreshImageOverlays() {
+        val liveFiles = currentScene.images.map { it.fileName }.filter { it.isNotBlank() }.toSet()
+        imageBitmapCache.keys.filter { it !in liveFiles }.forEach { key ->
+            imageBitmapCache.remove(key)?.recycle()
+        }
+        currentScene.images.forEach { image ->
+            val renderer = imageRenderers[image.id] ?: return@forEach
+            bindImageBitmap(image, renderer)
+            renderer.update(image.enabled, image.keepAspectRatio)
+        }
+    }
+
+    private fun bindImageBitmap(image: ImageComponent, renderer: ImageOverlayRenderer) {
+        if (image.fileName.isBlank()) {
+            renderer.setBitmap(null, image.displayName)
+            return
+        }
+        val cached = imageBitmapCache[image.fileName]
+        if (cached != null && !cached.isRecycled) {
+            renderer.setBitmap(cached, image.displayName)
+            return
+        }
+        val file = SceneImageStore.fileFor(applicationContext, image.fileName)
+        val decoded = SceneImageStore.decodeFile(file)
+        if (decoded != null) {
+            imageBitmapCache[image.fileName] = decoded
+            renderer.setBitmap(decoded, image.displayName)
+        } else {
+            renderer.setBitmap(null, image.displayName)
+        }
     }
 
     private fun refreshChatOverlay() {
@@ -572,6 +655,13 @@ class StreamService : LifecycleService(), ConnectChecker {
         cameraFilter?.let { filter ->
             runCatching { filter.surfaceTexture.setDefaultBufferSize(cw, ch) }
         }
+        scene.images.forEach { image ->
+            val (iw, ih) = surfaceSizeForBounds(image.bounds)
+            imageFilters[image.id]?.let { filter ->
+                runCatching { filter.surfaceTexture.setDefaultBufferSize(iw, ih) }
+            }
+            imageRenderers[image.id]?.resizeBuffer(iw, ih)
+        }
     }
 
     private fun surfaceSizeForBounds(bounds: NormalizedRect): Pair<Int, Int> {
@@ -663,6 +753,7 @@ class StreamService : LifecycleService(), ConnectChecker {
             screenFilter = null
             cameraFilter = null
             chatFilter = null
+            imageFilters.clear()
         }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         currentStatus = "ERREUR"

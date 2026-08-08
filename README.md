@@ -17,7 +17,8 @@ L'application de quickstart as été générée par [android-qs-app-generator](h
 - orientation de l’image caméra synchronisée avec le device, rotations à 90° et 180° comprises ;
 - segmentation du sujet et flou du décor en temps réel ;
 
-- **Garder le ratio** (partage d??cran / cam?ra) : verrouille le ratio du cadre au resize ; sinon cadre libre et vid?o **center-crop** (jamais d?form?e).
+- **Garder le ratio** (écran / caméra / image) : verrouille le ratio du cadre au resize ; pour **écran/caméra**, contenu en **crop/cover** si activé, étirement si désactivé ; pour **image**, le contenu est **toujours cropté** (cover, jamais déformé), coché ou non ;
+- widget **Image** : import via le sélecteur système (JPEG, PNG, WebP, GIF, BMP, HEIC/HEIF, AVIF selon l’appareil), copie locale interne, max 10 par scène ;
 - rendu du chat dans la composition vidéo (prévisualisation + chat réel Twitch IRC / YouTube Live Chat) ;
 - encodage H.264/AAC en 1280×720 à 30 FPS ;
 - diffusion RTMP/RTMPS via RootEncoder ;

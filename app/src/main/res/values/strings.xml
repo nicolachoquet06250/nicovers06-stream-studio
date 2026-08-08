@@ -69,4 +69,15 @@
     <string name="numbered_scene">Scène %1$d</string>
     <string name="widget_dropdown_placeholder">Choisir un widget…</string>
     <string name="keep_aspect_ratio">Garder le ratio</string>
+    <string name="image_widget">Image</string>
+    <string name="image_widget_numbered">Image %1$d</string>
+    <string name="image_widget_default_name">Image %1$d</string>
+    <string name="image_choose">Choisir une image</string>
+    <string name="image_remove">Supprimer l’image</string>
+    <string name="image_no_file">Aucune image sélectionnée</string>
+    <string name="image_file_label">Fichier : %1$s</string>
+    <string name="image_pick_success">Image importée</string>
+    <string name="image_pick_cancelled">Sélection d’image annulée</string>
+    <string name="image_pick_failed">Impossible d’ouvrir le sélecteur d’images</string>
+    <string name="image_decode_failed">Format d’image non pris en charge ou fichier illisible</string>
 </resources>
