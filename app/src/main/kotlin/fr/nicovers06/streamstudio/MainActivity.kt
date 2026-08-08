@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
+import android.net.Uri
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -19,15 +20,24 @@ import android.text.InputType
 import android.view.DragEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.Switch
+import android.widget.TextView
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import fr.nicovers06.streamstudio.data.SceneImageStore
 import fr.nicovers06.streamstudio.data.SceneRepository
 import fr.nicovers06.streamstudio.databinding.ActivityMainBinding
 import fr.nicovers06.streamstudio.model.CameraFacing
+import fr.nicovers06.streamstudio.model.ImageComponent
+import fr.nicovers06.streamstudio.model.LayerRef
 import fr.nicovers06.streamstudio.model.ChatComponent
 import fr.nicovers06.streamstudio.model.ChatMessage
 import fr.nicovers06.streamstudio.model.StreamScene
@@ -40,7 +50,9 @@ import fr.nicovers06.streamstudio.stream.chat.LiveChatConfig
 import fr.nicovers06.streamstudio.stream.chat.LiveChatPlatform
 import fr.nicovers06.streamstudio.stream.chat.TwitchIrcChatClient
 import fr.nicovers06.streamstudio.stream.chat.YouTubeLiveChatClient
+import fr.nicovers06.streamstudio.ui.ComponentBoundsView
 import java.util.Locale
+import java.util.UUID
 
 class MainActivity : Activity() {
     private data class PlatformPreset(val label: String, val server: String)
@@ -63,6 +75,9 @@ class MainActivity : Activity() {
     private var streaming = false
     private var addableWidgetModules: List<WidgetModule> = emptyList()
     private var reorderingLayers = false
+    private val imageBoundsViews = linkedMapOf<String, ComponentBoundsView>()
+    private val imageWidgetBlocks = linkedMapOf<String, LinearLayout>()
+    private var pendingImagePickId: String? = null
 
     private val streamListener = object : StreamService.Listener {
         override fun onStateChanged(isStreaming: Boolean, status: String) = runOnUiThread {
@@ -280,6 +295,7 @@ class MainActivity : Activity() {
                 it.copy(chat = it.chat.copy(bounds = bounds))
             }
         }
+        syncImageWidgets(scene)
         applyWidgetStackOrder(scene.normalizedLayerOrder())
         applyPreviewLayerOrder(scene.normalizedLayerOrder())
         rendering = false
@@ -334,14 +350,14 @@ class MainActivity : Activity() {
             WidgetType.SCREEN -> updateScene {
                 it.copy(
                     screen = it.screen.copy(enabled = true),
-                    layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.SCREEN),
+                    layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.SCREEN, it),
                 )
             }
             WidgetType.CAMERA -> {
                 updateScene {
                     it.copy(
                         camera = it.camera.copy(enabled = true),
-                        layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.CAMERA),
+                        layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.CAMERA, it),
                     )
                 }
                 ensureCameraPermissionForPreview()
@@ -349,46 +365,37 @@ class MainActivity : Activity() {
             WidgetType.CHAT -> updateScene {
                 it.copy(
                     chat = it.chat.copy(enabled = true),
-                    layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.CHAT),
+                    layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.CHAT, it),
                 )
             }
             WidgetType.MICROPHONE -> updateScene {
                 it.copy(
                     microphoneEnabled = true,
-                    layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.MICROPHONE),
+                    layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.MICROPHONE, it),
                 )
+            }
+            WidgetType.IMAGE -> {
+                val image = ImageComponent(
+                    id = UUID.randomUUID().toString(),
+                    displayName = getString(R.string.image_widget_default_name, WidgetModules.instanceCount(scene, WidgetType.IMAGE) + 1),
+                )
+                updateScene {
+                    val images = (it.images + image).take(ImageComponent.MAX_PER_SCENE)
+                    val next = it.copy(images = images)
+                    next.copy(
+                        layerOrder = WidgetModules.bringToFront(next.layerOrder, LayerRef.image(image.id), next),
+                    )
+                }
+                openImagePicker(image.id)
             }
         }
         showMessage(getString(R.string.add_widget_added, module.label))
     }
 
     private fun setupWidgetLayerDrag() {
-        val handles = listOf(
-            binding.screenLayerHandle to WidgetType.SCREEN,
-            binding.cameraLayerHandle to WidgetType.CAMERA,
-            binding.chatLayerHandle to WidgetType.CHAT,
-            binding.microphoneLayerHandle to WidgetType.MICROPHONE,
-        )
-        handles.forEach { (handle, type) ->
-            handle.setOnTouchListener { view, event ->
-                if (event.actionMasked != MotionEvent.ACTION_DOWN) return@setOnTouchListener false
-                val block = widgetBlock(type)
-                val clip = ClipData.newPlainText("widgetLayer", type.name)
-                val shadow = View.DragShadowBuilder(block)
-                val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    view.startDragAndDrop(clip, shadow, type, 0)
-                } else {
-                    @Suppress("DEPRECATION")
-                    view.startDrag(clip, shadow, type, 0)
-                }
-                if (started) {
-                    block.alpha = 0.45f
-                }
-                started
-            }
-        }
         binding.widgetStack.setOnDragListener { stack, event ->
-            val dragged = event.localState as? WidgetType ?: return@setOnDragListener false
+            val key = event.localState as? String ?: return@setOnDragListener false
+            val dragged = LayerRef.parse(key) ?: return@setOnDragListener false
             when (event.action) {
                 DragEvent.ACTION_DRAG_STARTED -> true
                 DragEvent.ACTION_DRAG_LOCATION -> {
@@ -401,7 +408,7 @@ class MainActivity : Activity() {
                     true
                 }
                 DragEvent.ACTION_DRAG_ENDED -> {
-                    widgetBlock(dragged).alpha = 1f
+                    widgetBlock(dragged)?.alpha = 1f
                     if (event.result) {
                         commitWidgetLayerOrderFromStack()
                     } else {
@@ -414,18 +421,39 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun widgetBlock(type: WidgetType): View = when (type) {
+    private fun attachLayerHandle(handle: View, ref: LayerRef) {
+        handle.setOnTouchListener { view, event ->
+            if (event.actionMasked != MotionEvent.ACTION_DOWN) return@setOnTouchListener false
+            val block = widgetBlock(ref) ?: return@setOnTouchListener false
+            val clip = ClipData.newPlainText("widgetLayer", ref.storageKey())
+            val shadow = View.DragShadowBuilder(block)
+            val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                view.startDragAndDrop(clip, shadow, ref.storageKey(), 0)
+            } else {
+                @Suppress("DEPRECATION")
+                view.startDrag(clip, shadow, ref.storageKey(), 0)
+            }
+            if (started) {
+                block.alpha = 0.45f
+            }
+            started
+        }
+    }
+
+    private fun widgetBlock(ref: LayerRef): View? = when (ref.type) {
         WidgetType.SCREEN -> binding.screenWidgetBlock
         WidgetType.CAMERA -> binding.cameraWidgetBlock
         WidgetType.CHAT -> binding.chatWidgetBlock
         WidgetType.MICROPHONE -> binding.microphoneWidgetBlock
+        WidgetType.IMAGE -> imageWidgetBlocks[ref.instanceId]
     }
 
-    private fun boundsView(type: WidgetType): View? = when (type) {
+    private fun boundsView(ref: LayerRef): View? = when (ref.type) {
         WidgetType.SCREEN -> binding.screenBounds
         WidgetType.CAMERA -> binding.cameraBounds
         WidgetType.CHAT -> binding.chatBounds
         WidgetType.MICROPHONE -> null
+        WidgetType.IMAGE -> imageBoundsViews[ref.instanceId]
     }
 
     private fun insertIndexForY(stack: LinearLayout, y: Float): Int {
@@ -441,27 +469,24 @@ class MainActivity : Activity() {
         return stack.childCount - 1
     }
 
-    private fun moveWidgetBlock(stack: LinearLayout, type: WidgetType, targetIndex: Int) {
-        val block = widgetBlock(type)
+    private fun moveWidgetBlock(stack: LinearLayout, ref: LayerRef, targetIndex: Int) {
+        val block = widgetBlock(ref) ?: return
         val from = stack.indexOfChild(block)
         if (from < 0) return
         val desired = targetIndex.coerceIn(0, (stack.childCount - 1).coerceAtLeast(0))
         if (from == desired) return
         stack.removeView(block)
-        // desired est l’index cible dans la liste d’origine ; après retrait,
-        // insertAt = desired convient pour les deux directions avec coerceAtMost.
         stack.addView(block, desired.coerceAtMost(stack.childCount))
     }
 
-    private fun readWidgetStackOrder(): List<WidgetType> {
+    private fun readWidgetStackOrder(): List<LayerRef> {
         val stack = binding.widgetStack
         return buildList {
             for (index in 0 until stack.childCount) {
                 val tag = stack.getChildAt(index).tag as? String
-                val type = tag?.let { runCatching { WidgetType.valueOf(it) }.getOrNull() }
-                if (type != null) add(type)
+                LayerRef.parse(tag.orEmpty())?.let { add(it) }
             }
-        }.let { WidgetModules.normalizeLayerOrder(it) }
+        }.let { WidgetModules.normalizeLayerOrder(it, currentScene()) }
     }
 
     private fun commitWidgetLayerOrderFromStack() {
@@ -474,11 +499,13 @@ class MainActivity : Activity() {
         reorderingLayers = false
     }
 
-    private fun applyWidgetStackOrder(orderFrontFirst: List<WidgetType>) {
+    private fun applyWidgetStackOrder(orderFrontFirst: List<LayerRef>) {
         val stack = binding.widgetStack
-        val normalized = WidgetModules.normalizeLayerOrder(orderFrontFirst)
-        normalized.forEachIndexed { index, type ->
-            val block = widgetBlock(type)
+        val scene = currentScene()
+        syncImageWidgetBlocks(scene)
+        val normalized = WidgetModules.normalizeLayerOrder(orderFrontFirst, scene)
+        normalized.forEachIndexed { index, ref ->
+            val block = widgetBlock(ref) ?: return@forEachIndexed
             val currentIndex = stack.indexOfChild(block)
             if (currentIndex != index) {
                 stack.removeView(block)
@@ -487,11 +514,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun applyPreviewLayerOrder(orderFrontFirst: List<WidgetType>) {
-        // FrameLayout : dernier bringToFront = devant.
-        WidgetModules.visualLayerOrder(orderFrontFirst)
+    private fun applyPreviewLayerOrder(orderFrontFirst: List<LayerRef>) {
+        val scene = currentScene()
+        WidgetModules.visualLayerOrder(orderFrontFirst, scene)
             .asReversed()
-            .forEach { type -> boundsView(type)?.bringToFront() }
+            .forEach { ref -> boundsView(ref)?.bringToFront() }
     }
 
     private fun selectCameraFacing(facing: CameraFacing) {
@@ -776,6 +803,10 @@ class MainActivity : Activity() {
     @Deprecated("MediaProjection still uses an activity result Intent on all supported Android versions")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_PICK_IMAGE) {
+            handleImagePickResult(resultCode, data)
+            return
+        }
         if (requestCode != REQUEST_SCREEN_SELECTION) return
         if (resultCode == RESULT_OK && data != null) {
             screenCapturePreparing = true
@@ -789,10 +820,289 @@ class MainActivity : Activity() {
                 .onFailure {
                     screenCapturePreparing = false
                     updateScreenSelectionUi()
-                    showMessage("Impossible d’ouvrir l’aperçu du partage d’écran")
+                    showMessage("Impossible d'ouvrir l'aper?u du partage d'?cran")
                 }
         } else {
-            showMessage("Sélection du partage d’écran annulée")
+            showMessage("S?lection du partage d'?cran annul?e")
+        }
+    }
+
+    private fun openImagePicker(imageId: String) {
+        pendingImagePickId = imageId
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                "image/jpeg", "image/png", "image/webp", "image/gif",
+                "image/bmp", "image/heic", "image/heif", "image/avif", "image/*",
+            ))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { startActivityForResult(intent, REQUEST_PICK_IMAGE) }
+            .onFailure {
+                pendingImagePickId = null
+                showMessage(getString(R.string.image_pick_failed))
+            }
+    }
+
+    private fun handleImagePickResult(resultCode: Int, data: Intent?) {
+        val imageId = pendingImagePickId
+        pendingImagePickId = null
+        if (imageId == null) return
+        if (resultCode != RESULT_OK || data?.data == null) {
+            showMessage(getString(R.string.image_pick_cancelled))
+            return
+        }
+        val uri: Uri = data.data!!
+        val imported = SceneImageStore.importFromUri(this, uri)
+        if (imported == null) {
+            showMessage(getString(R.string.image_decode_failed))
+            return
+        }
+        updateScene { scene ->
+            val old = scene.image(imageId)
+            val previousFile = old?.fileName.orEmpty()
+            if (previousFile.isNotBlank() && previousFile != imported.fileName) {
+                SceneImageStore.delete(this, previousFile)
+            }
+            scene.copy(
+                images = scene.images.map { img ->
+                    if (img.id != imageId) img
+                    else img.copy(
+                        fileName = imported.fileName,
+                        displayName = imported.displayName.ifBlank { img.displayName },
+                    )
+                },
+            )
+        }
+        showMessage(getString(R.string.image_pick_success))
+    }
+
+    private fun syncImageWidgets(scene: StreamScene) {
+        syncImageWidgetBlocks(scene)
+        syncImageBoundsViews(scene)
+        attachStaticLayerHandles()
+    }
+
+    private fun attachStaticLayerHandles() {
+        attachLayerHandle(binding.screenLayerHandle, LayerRef.singleton(WidgetType.SCREEN))
+        attachLayerHandle(binding.cameraLayerHandle, LayerRef.singleton(WidgetType.CAMERA))
+        attachLayerHandle(binding.chatLayerHandle, LayerRef.singleton(WidgetType.CHAT))
+        attachLayerHandle(binding.microphoneLayerHandle, LayerRef.singleton(WidgetType.MICROPHONE))
+    }
+
+    private fun syncImageBoundsViews(scene: StreamScene) {
+        val preview = binding.previewFrame
+        val liveIds = scene.images.map { it.id }.toSet()
+        imageBoundsViews.keys.filter { it !in liveIds }.toList().forEach { id ->
+            imageBoundsViews.remove(id)?.let { preview.removeView(it) }
+        }
+        scene.images.forEach { image ->
+            val view = imageBoundsViews.getOrPut(image.id) {
+                ComponentBoundsView(this).also { v ->
+                    v.layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                    )
+                    preview.addView(v)
+                }
+            }
+            val label = image.displayName.ifBlank { getString(R.string.image_widget) }
+            view.bind(
+                image.bounds,
+                image.enabled,
+                label,
+                keepAspectRatio = image.keepAspectRatio,
+            ) { bounds ->
+                updateScene(debounceSave = true, render = false) { sc ->
+                    sc.copy(
+                        images = sc.images.map { img ->
+                            if (img.id == image.id) img.copy(bounds = bounds) else img
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    private fun syncImageWidgetBlocks(scene: StreamScene) {
+        val stack = binding.widgetStack
+        val liveIds = scene.images.map { it.id }.toSet()
+        imageWidgetBlocks.keys.filter { it !in liveIds }.toList().forEach { id ->
+            imageWidgetBlocks.remove(id)?.let { stack.removeView(it) }
+        }
+        scene.images.forEachIndexed { index, image ->
+            val block = imageWidgetBlocks.getOrPut(image.id) {
+                buildImageWidgetBlock(image.id).also { stack.addView(it) }
+            }
+            bindImageWidgetBlock(block, image, index)
+        }
+    }
+
+    private fun buildImageWidgetBlock(imageId: String): LinearLayout {
+        val density = resources.displayMetrics.density
+        val block = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            tag = LayerRef.image(imageId).storageKey()
+        }
+        block.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (1 * density).toInt(),
+            )
+            setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.border_soft))
+        })
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+        }
+        val handle = ImageView(this).apply {
+            id = View.generateViewId()
+            layoutParams = LinearLayout.LayoutParams((40 * density).toInt(), (52 * density).toInt())
+            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+            scaleType = ImageView.ScaleType.CENTER
+            setImageResource(R.drawable.ic_drag_handle)
+            contentDescription = getString(R.string.widget_layer_handle)
+            tag = "handle"
+        }
+        attachLayerHandle(handle, LayerRef.image(imageId))
+        val enableSwitch = Switch(this).apply {
+            id = View.generateViewId()
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setText(R.string.image_widget)
+            tag = "enable"
+        }
+        row.addView(handle)
+        row.addView(enableSwitch)
+        block.addView(row)
+
+        val options = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = (10 * density).toInt() }
+            setPadding((40 * density).toInt(), 0, 0, 0)
+            tag = "options"
+        }
+        val fileLabel = TextView(this).apply {
+            tag = "fileLabel"
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            textSize = 11f
+        }
+        val pickButton = Button(this).apply {
+            tag = "pick"
+            text = getString(R.string.image_choose)
+            isAllCaps = false
+            background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_button_outline)
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.purple_light))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (46 * density).toInt(),
+            ).apply { topMargin = (8 * density).toInt() }
+        }
+        val keepSwitch = Switch(this).apply {
+            tag = "keepAspect"
+            setText(R.string.keep_aspect_ratio)
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            textSize = 12f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (46 * density).toInt(),
+            )
+        }
+        val removeButton = Button(this).apply {
+            tag = "remove"
+            text = getString(R.string.image_remove)
+            isAllCaps = false
+            background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_button_outline)
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.red))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (46 * density).toInt(),
+            ).apply { topMargin = (4 * density).toInt() }
+        }
+        options.addView(fileLabel)
+        options.addView(pickButton)
+        options.addView(keepSwitch)
+        options.addView(removeButton)
+        block.addView(options)
+        return block
+    }
+
+    private fun bindImageWidgetBlock(block: LinearLayout, image: ImageComponent, index: Int) {
+        block.tag = LayerRef.image(image.id).storageKey()
+        val enableSwitch = block.findViewWithTag<Switch>("enable")
+        val options = block.findViewWithTag<LinearLayout>("options")
+        val fileLabel = block.findViewWithTag<TextView>("fileLabel")
+        val pickButton = block.findViewWithTag<Button>("pick")
+        val keepSwitch = block.findViewWithTag<Switch>("keepAspect")
+        val removeButton = block.findViewWithTag<Button>("remove")
+        val label = getString(R.string.image_widget_numbered, index + 1)
+        enableSwitch?.text = label
+        if (!rendering) {
+            // keep listeners; update checked state under rendering flag
+        }
+        val wasRendering = rendering
+        rendering = true
+        enableSwitch?.isChecked = image.enabled
+        keepSwitch?.isChecked = image.keepAspectRatio
+        rendering = wasRendering
+        options?.visibility = if (image.enabled) View.VISIBLE else View.GONE
+        fileLabel?.text = if (image.fileName.isBlank()) {
+            getString(R.string.image_no_file)
+        } else {
+            getString(R.string.image_file_label, image.displayName)
+        }
+        enableSwitch?.setOnCheckedChangeListener { _, enabled ->
+            if (!rendering) {
+                updateScene { sc ->
+                    sc.copy(
+                        images = sc.images.map {
+                            if (it.id == image.id) it.copy(enabled = enabled) else it
+                        },
+                    )
+                }
+            }
+        }
+        keepSwitch?.setOnCheckedChangeListener { _, enabled ->
+            if (!rendering) {
+                updateScene { sc ->
+                    sc.copy(
+                        images = sc.images.map {
+                            if (it.id == image.id) it.copy(keepAspectRatio = enabled) else it
+                        },
+                    )
+                }
+            }
+        }
+        pickButton?.setOnClickListener {
+            if (!streaming) openImagePicker(image.id)
+        }
+        removeButton?.setOnClickListener {
+            if (streaming || rendering) return@setOnClickListener
+            updateScene { sc ->
+                val target = sc.image(image.id)
+                if (target != null && target.fileName.isNotBlank()) {
+                    SceneImageStore.delete(this, target.fileName)
+                }
+                sc.copy(images = sc.images.filterNot { it.id == image.id })
+            }
+        }
+        enableSwitch?.isEnabled = !streaming
+        pickButton?.isEnabled = !streaming
+        keepSwitch?.isEnabled = !streaming
+        removeButton?.isEnabled = !streaming
+        block.findViewWithTag<View>("handle")?.let {
+            attachLayerHandle(it, LayerRef.image(image.id))
         }
     }
 
@@ -874,6 +1184,7 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        private const val REQUEST_PICK_IMAGE = 4401
         private const val REQUEST_PERMISSIONS = 100
         private const val REQUEST_SCREEN_SELECTION = 101
         private const val KEY_SCENE_INDEX = "scene_index"

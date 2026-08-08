@@ -160,6 +160,44 @@ data class ChatComponent(
     }
 }
 
+data class ImageComponent(
+    val id: String = UUID.randomUUID().toString(),
+    val enabled: Boolean = true,
+    val bounds: NormalizedRect = NormalizedRect(0.36f, 0.34f, 0.28f, 0.32f),
+    /**
+     * Verrouille le ratio du cadre au redimensionnement sur la scène.
+     * Le contenu image est toujours cropté (cover), coché ou non — jamais déformé.
+     */
+    val keepAspectRatio: Boolean = true,
+    /** Nom de fichier relatif sous filesDir/scene_images. */
+    val fileName: String = "",
+    val displayName: String = "Image",
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("id", id)
+        .put("enabled", enabled)
+        .put("bounds", bounds.toJson())
+        .put("keepAspectRatio", keepAspectRatio)
+        .put("fileName", fileName)
+        .put("displayName", displayName)
+
+    companion object {
+        const val MAX_PER_SCENE = 10
+
+        fun fromJson(json: JSONObject): ImageComponent {
+            val defaults = ImageComponent()
+            return ImageComponent(
+                id = json.optString("id").ifBlank { UUID.randomUUID().toString() },
+                enabled = json.optBoolean("enabled", defaults.enabled),
+                bounds = NormalizedRect.fromJson(json.optJSONObject("bounds") ?: JSONObject(), defaults.bounds),
+                keepAspectRatio = json.optBoolean("keepAspectRatio", defaults.keepAspectRatio),
+                fileName = json.optString("fileName", defaults.fileName),
+                displayName = json.optString("displayName", defaults.displayName).ifBlank { defaults.displayName },
+            )
+        }
+    }
+}
+
 data class StreamScene(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "Scène principale",
@@ -167,13 +205,16 @@ data class StreamScene(
     val microphoneEnabled: Boolean = true,
     val camera: CameraComponent = CameraComponent(),
     val chat: ChatComponent = ChatComponent(),
+    val images: List<ImageComponent> = emptyList(),
     /**
-     * Ordre de superposition des widgets visuels.
+     * Ordre de superposition des widgets.
      * Index 0 = le plus devant (premier de la liste sidebar).
      */
-    val layerOrder: List<WidgetType> = WidgetModules.defaultLayerOrder,
+    val layerOrder: List<LayerRef> = WidgetModules.defaultLayerOrder,
 ) {
-    fun normalizedLayerOrder(): List<WidgetType> = WidgetModules.normalizeLayerOrder(layerOrder)
+    fun image(id: String): ImageComponent? = images.firstOrNull { it.id == id }
+
+    fun normalizedLayerOrder(): List<LayerRef> = WidgetModules.normalizeLayerOrder(layerOrder, this)
 
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -183,23 +224,34 @@ data class StreamScene(
         .put("camera", camera.toJson())
         .put("chat", chat.toJson())
         .put(
+            "images",
+            JSONArray().apply { images.take(ImageComponent.MAX_PER_SCENE).forEach { put(it.toJson()) } },
+        )
+        .put(
             "layerOrder",
-            JSONArray().apply { normalizedLayerOrder().forEach { put(it.name) } },
+            JSONArray().apply { normalizedLayerOrder().forEach { put(it.storageKey()) } },
         )
 
     companion object {
         fun fromJson(json: JSONObject): StreamScene {
             val legacyScreenEnabled = json.optBoolean("screenEnabled", true)
+            val images = buildList {
+                val stored = json.optJSONArray("images")
+                if (stored != null) {
+                    for (index in 0 until stored.length()) {
+                        stored.optJSONObject(index)?.let { add(ImageComponent.fromJson(it)) }
+                    }
+                }
+            }.take(ImageComponent.MAX_PER_SCENE)
             val storedOrder = json.optJSONArray("layerOrder")
             val parsedOrder = buildList {
                 if (storedOrder != null) {
                     for (index in 0 until storedOrder.length()) {
-                        val raw = storedOrder.optString(index)
-                        runCatching { WidgetType.valueOf(raw) }.getOrNull()?.let { add(it) }
+                        LayerRef.parse(storedOrder.optString(index))?.let { add(it) }
                     }
                 }
             }
-            return StreamScene(
+            val scene = StreamScene(
                 id = json.optString("id").ifBlank { UUID.randomUUID().toString() },
                 name = json.optString("name", "Scène"),
                 screen = ScreenComponent.fromJson(
@@ -209,8 +261,10 @@ data class StreamScene(
                 microphoneEnabled = json.optBoolean("microphoneEnabled", true),
                 camera = CameraComponent.fromJson(json.optJSONObject("camera") ?: JSONObject()),
                 chat = ChatComponent.fromJson(json.optJSONObject("chat") ?: JSONObject()),
-                layerOrder = WidgetModules.normalizeLayerOrder(parsedOrder),
+                images = images,
+                layerOrder = parsedOrder,
             )
+            return scene.copy(layerOrder = scene.normalizedLayerOrder())
         }
     }
 }
