@@ -33,8 +33,14 @@ import com.pedro.encoder.input.sources.video.NoVideoSource
 import com.pedro.library.generic.GenericStream
 import fr.nicovers06.streamstudio.MainActivity
 import fr.nicovers06.streamstudio.R
+import fr.nicovers06.streamstudio.model.ChatMessage
 import fr.nicovers06.streamstudio.model.NormalizedRect
 import fr.nicovers06.streamstudio.model.StreamScene
+import fr.nicovers06.streamstudio.model.WidgetModules
+import fr.nicovers06.streamstudio.model.WidgetType
+import fr.nicovers06.streamstudio.stream.chat.LiveChatConfig
+import fr.nicovers06.streamstudio.stream.chat.LiveChatCoordinator
+import fr.nicovers06.streamstudio.stream.chat.LiveChatPlatform
 
 class StreamService : LifecycleService(), ConnectChecker {
     interface Listener {
@@ -42,6 +48,7 @@ class StreamService : LifecycleService(), ConnectChecker {
         fun onScreenCaptureChanged(isReady: Boolean)
         fun onBitrateChanged(bitsPerSecond: Long)
         fun onWarning(message: String)
+        fun onLiveChatMessages(messages: List<ChatMessage>) {}
     }
 
     inner class LocalBinder : Binder() {
@@ -63,6 +70,7 @@ class StreamService : LifecycleService(), ConnectChecker {
     private var mediaProjection: MediaProjection? = null
     private var currentScene = StreamScene()
     private var filtersAdded = false
+    private var installedLayerOrder: List<WidgetType> = emptyList()
     private var screenFilter: SurfaceFilterRender? = null
     private var cameraFilter: SurfaceFilterRender? = null
     private var chatFilter: SurfaceFilterRender? = null
@@ -71,6 +79,10 @@ class StreamService : LifecycleService(), ConnectChecker {
     private var cameraPipeline: CameraOverlayPipeline? = null
     private var chatRenderer: ChatOverlayRenderer? = null
     private var currentStatus = "PRÊT"
+    private val liveChatCoordinator = LiveChatCoordinator()
+    private var liveChatConfig = LiveChatConfig()
+    private var liveChatMessages: List<ChatMessage> = emptyList()
+    private var liveChatActive = false
 
     override fun onCreate() {
         super.onCreate()
@@ -117,6 +129,8 @@ class StreamService : LifecycleService(), ConnectChecker {
 
     override fun onDestroy() {
         listener = null
+        liveChatCoordinator.stop()
+        liveChatActive = false
         stopScreenCapture()
         releaseOverlayPipelines()
         if (::stream.isInitialized) stream.release()
@@ -142,9 +156,14 @@ class StreamService : LifecycleService(), ConnectChecker {
 
     fun applyScene(scene: StreamScene) {
         currentScene = scene
+        val layerOrder = scene.normalizedLayerOrder()
+        if (filtersAdded && installedLayerOrder != layerOrder) {
+            reinstallFilters(layerOrder)
+        }
         if (scene.screen.enabled && mediaProjection != null) {
             ensureScreenPipeline()
         }
+        syncOverlaySurfaceSizes(scene)
         screenFilter?.let {
             applyTransform(it, scene.screen.bounds)
             val hasScreenOutput = screenPipeline != null && screenSurface?.isValid == true
@@ -167,7 +186,13 @@ class StreamService : LifecycleService(), ConnectChecker {
                 pipeline.stop()
             }
         }
-        chatRenderer?.update(scene.chat.messages, scene.chat.enabled)
+        refreshChatOverlay()
+        syncLiveChat()
+    }
+
+    fun configureLiveChat(config: LiveChatConfig) {
+        liveChatConfig = config
+        syncLiveChat()
     }
 
     fun attachPreview(textureView: TextureView) {
@@ -188,6 +213,7 @@ class StreamService : LifecycleService(), ConnectChecker {
         stream.stopPreview(true)
         if (!stream.isStreaming) {
             filtersAdded = false
+            installedLayerOrder = emptyList()
             releaseOverlayPipelines(keepScreenCapture = keepScreenCapture)
             screenFilter = null
             cameraFilter = null
@@ -204,8 +230,11 @@ class StreamService : LifecycleService(), ConnectChecker {
             runCatching { stream.changeAudioSource(SilenceAudioSource()) }
         }
         stopScreenCapture()
+        // Keep live chat running for preview if chat stays enabled.
+        syncLiveChat()
         if (!stream.isOnPreview) {
             filtersAdded = false
+            installedLayerOrder = emptyList()
             releaseOverlayPipelines()
             screenFilter = null
             cameraFilter = null
@@ -257,6 +286,7 @@ class StreamService : LifecycleService(), ConnectChecker {
             StreamScene.fromJson(org.json.JSONObject(intent.getStringExtra(EXTRA_SCENE_JSON).orEmpty()))
         }.getOrElse { currentScene }
         val endpoint = intent.getStringExtra(EXTRA_ENDPOINT).orEmpty()
+        liveChatConfig = liveChatConfigFromIntent(intent)
         startForegroundFor(scene, "Connexion en cours…")
 
         if (!prepared || endpoint.isBlank()) {
@@ -320,9 +350,37 @@ class StreamService : LifecycleService(), ConnectChecker {
     private fun ensureFilters() {
         if (filtersAdded) return
         releaseOverlayPipelines(keepScreenCapture = mediaProjection != null)
+        val layerOrder = currentScene.normalizedLayerOrder()
+        createOverlayFilters()
+        installFiltersInOrder(layerOrder)
+        filtersAdded = true
+        installedLayerOrder = layerOrder
+    }
 
+    /**
+     * Réinstalle les filtres GL dans l’ordre back→front dérivé de [layerOrderFrontFirst].
+     * removeFilter libère les ressources GL : de nouvelles instances SurfaceFilterRender sont créées.
+     */
+    private fun reinstallFilters(layerOrderFrontFirst: List<WidgetType>) {
+        if (!prepared || !::stream.isInitialized) return
+        val gl = stream.getGlInterface()
+        screenFilter?.let { runCatching { gl.removeFilter(it) } }
+        cameraFilter?.let { runCatching { gl.removeFilter(it) } }
+        chatFilter?.let { runCatching { gl.removeFilter(it) } }
+        screenFilter = null
+        cameraFilter = null
+        chatFilter = null
+        // Pipelines rattachés via SurfaceReadyCallback des nouveaux filtres.
+        releaseOverlayPipelines(keepScreenCapture = mediaProjection != null)
+        createOverlayFilters()
+        installFiltersInOrder(layerOrderFrontFirst)
+        installedLayerOrder = layerOrderFrontFirst
+    }
+
+    private fun createOverlayFilters() {
         screenFilter = SurfaceFilterRender(SurfaceFilterRender.SurfaceReadyCallback { texture: SurfaceTexture ->
-            texture.setDefaultBufferSize(OUTPUT_WIDTH, OUTPUT_HEIGHT)
+            val (sw, sh) = surfaceSizeForBounds(currentScene.screen.bounds)
+            texture.setDefaultBufferSize(sw, sh)
             screenPipeline?.detachSurface()
             screenSurface?.release()
             screenSurface = Surface(texture)
@@ -338,7 +396,8 @@ class StreamService : LifecycleService(), ConnectChecker {
             applyScene(currentScene)
         })
         cameraFilter = SurfaceFilterRender(SurfaceFilterRender.SurfaceReadyCallback { texture ->
-            texture.setDefaultBufferSize(CAMERA_SURFACE_WIDTH, CAMERA_SURFACE_HEIGHT)
+            val (cw, ch) = surfaceSizeForBounds(currentScene.camera.bounds)
+            texture.setDefaultBufferSize(cw, ch)
             cameraPipeline?.release()
             cameraPipeline = CameraOverlayPipeline(
                 context = applicationContext,
@@ -353,23 +412,38 @@ class StreamService : LifecycleService(), ConnectChecker {
             chatRenderer = ChatOverlayRenderer(texture)
             applyScene(currentScene)
         })
+    }
 
-        screenFilter?.let {
-            applyTransform(it, currentScene.screen.bounds)
-            it.setAlpha(0f)
-            stream.getGlInterface().addFilter(it)
+    private fun installFiltersInOrder(layerOrderFrontFirst: List<WidgetType>) {
+        val gl = stream.getGlInterface()
+        val order = WidgetModules.visualLayerOrder(layerOrderFrontFirst)
+        // GL : premier ajouté = fond ; dernier = devant → inverser la liste UI (front→back).
+        order.asReversed().forEach { type ->
+            val filter = filterFor(type) ?: return@forEach
+            when (type) {
+                WidgetType.SCREEN -> {
+                    applyTransform(filter, currentScene.screen.bounds)
+                    filter.setAlpha(0f)
+                }
+                WidgetType.CAMERA -> {
+                    applyTransform(filter, currentScene.camera.bounds)
+                    filter.setAlpha(if (currentScene.camera.enabled) 1f else 0f)
+                }
+                WidgetType.CHAT -> {
+                    applyTransform(filter, currentScene.chat.bounds)
+                    filter.setAlpha(if (currentScene.chat.enabled) 1f else 0f)
+                }
+                WidgetType.MICROPHONE -> Unit
+            }
+            gl.addFilter(filter)
         }
-        cameraFilter?.let {
-            applyTransform(it, currentScene.camera.bounds)
-            it.setAlpha(if (currentScene.camera.enabled) 1f else 0f)
-            stream.getGlInterface().addFilter(it)
-        }
-        chatFilter?.let {
-            applyTransform(it, currentScene.chat.bounds)
-            it.setAlpha(if (currentScene.chat.enabled) 1f else 0f)
-            stream.getGlInterface().addFilter(it)
-        }
-        filtersAdded = true
+    }
+
+    private fun filterFor(type: WidgetType): SurfaceFilterRender? = when (type) {
+        WidgetType.SCREEN -> screenFilter
+        WidgetType.CAMERA -> cameraFilter
+        WidgetType.CHAT -> chatFilter
+        WidgetType.MICROPHONE -> null
     }
 
     private fun releaseOverlayPipelines(keepScreenCapture: Boolean = false) {
@@ -385,6 +459,39 @@ class StreamService : LifecycleService(), ConnectChecker {
         cameraPipeline = null
         chatRenderer?.release()
         chatRenderer = null
+    }
+
+    private fun refreshChatOverlay() {
+        val messages = if (liveChatActive) liveChatMessages else currentScene.chat.messages
+        chatRenderer?.update(messages, currentScene.chat.enabled)
+    }
+
+    private fun syncLiveChat() {
+        val wantLive = currentScene.chat.enabled && liveChatConfig.isActionable()
+        if (!wantLive) {
+            if (liveChatActive) {
+                liveChatCoordinator.stop()
+                liveChatActive = false
+                liveChatMessages = emptyList()
+                refreshChatOverlay()
+            }
+            return
+        }
+        liveChatCoordinator.start(
+            config = liveChatConfig,
+            onMessages = { messages ->
+                mainHandler.post {
+                    liveChatMessages = messages
+                    liveChatActive = true
+                    refreshChatOverlay()
+                    listener?.onLiveChatMessages(messages)
+                }
+            },
+            onStatus = { status ->
+                mainHandler.post { listener?.onWarning(status) }
+            },
+        )
+        liveChatActive = true
     }
 
     private fun ensureScreenPipeline(): Boolean {
@@ -405,9 +512,9 @@ class StreamService : LifecycleService(), ConnectChecker {
             context = applicationContext,
             mediaProjection = projection,
             outputSurface = surface,
-            width = OUTPUT_WIDTH,
-            height = OUTPUT_HEIGHT,
-            onProjectionStopped = {
+            captureWidth = OUTPUT_WIDTH,
+            captureHeight = OUTPUT_HEIGHT,
+            onStopped = {
                 mainHandler.post {
                     if (mediaProjection === projection) {
                         mediaProjection = null
@@ -449,6 +556,36 @@ class StreamService : LifecycleService(), ConnectChecker {
         val safe = bounds.constrained()
         filter.setScale(safe.width * 100f, safe.height * 100f)
         filter.setPosition(safe.x * 100f, safe.y * 100f)
+    }
+
+    /**
+     * Aligne le buffer des surfaces filtre sur le ratio du cadre widget.
+     * Cam?ra et ?cran center-cropent ensuite leur source dans ce buffer :
+     * le flux n?est jamais ?tir?.
+     */
+    private fun syncOverlaySurfaceSizes(scene: StreamScene) {
+        val (sw, sh) = surfaceSizeForBounds(scene.screen.bounds)
+        screenFilter?.let { filter ->
+            runCatching { filter.surfaceTexture.setDefaultBufferSize(sw, sh) }
+        }
+        val (cw, ch) = surfaceSizeForBounds(scene.camera.bounds)
+        cameraFilter?.let { filter ->
+            runCatching { filter.surfaceTexture.setDefaultBufferSize(cw, ch) }
+        }
+    }
+
+    private fun surfaceSizeForBounds(bounds: NormalizedRect): Pair<Int, Int> {
+        val aspect = bounds.pixelAspect(OUTPUT_WIDTH, OUTPUT_HEIGHT).coerceAtLeast(0.05f)
+        val maxSide = OVERLAY_SURFACE_MAX_SIDE
+        return if (aspect >= 1f) {
+            val w = maxSide
+            val h = (maxSide / aspect).toInt().coerceAtLeast(2)
+            w to h
+        } else {
+            val h = maxSide
+            val w = (maxSide * aspect).toInt().coerceAtLeast(2)
+            w to h
+        }
     }
 
     private fun startForegroundFor(scene: StreamScene, text: String) {
@@ -578,6 +715,26 @@ class StreamService : LifecycleService(), ConnectChecker {
         const val EXTRA_SCENE_JSON = "scene_json"
         const val EXTRA_PROJECTION_RESULT = "projection_result"
         const val EXTRA_PROJECTION_DATA = "projection_data"
+        const val EXTRA_CHAT_PLATFORM = "chat_platform"
+        const val EXTRA_TWITCH_CHANNEL = "twitch_channel"
+        const val EXTRA_TWITCH_LOGIN = "twitch_login"
+        const val EXTRA_TWITCH_OAUTH = "twitch_oauth"
+        const val EXTRA_YOUTUBE_VIDEO_ID = "youtube_video_id"
+        const val EXTRA_YOUTUBE_ACCESS_TOKEN = "youtube_access_token"
+
+        fun liveChatConfigFromIntent(intent: Intent): LiveChatConfig {
+            val platform = runCatching {
+                LiveChatPlatform.valueOf(intent.getStringExtra(EXTRA_CHAT_PLATFORM).orEmpty())
+            }.getOrDefault(LiveChatPlatform.NONE)
+            return LiveChatConfig(
+                platform = platform,
+                twitchChannel = intent.getStringExtra(EXTRA_TWITCH_CHANNEL).orEmpty(),
+                twitchLogin = intent.getStringExtra(EXTRA_TWITCH_LOGIN).orEmpty(),
+                twitchOAuthToken = intent.getStringExtra(EXTRA_TWITCH_OAUTH).orEmpty(),
+                youtubeVideoId = intent.getStringExtra(EXTRA_YOUTUBE_VIDEO_ID).orEmpty(),
+                youtubeAccessToken = intent.getStringExtra(EXTRA_YOUTUBE_ACCESS_TOKEN).orEmpty(),
+            )
+        }
 
         private const val NOTIFICATION_CHANNEL_ID = "stream_broadcast"
         private const val NOTIFICATION_ID = 6106
@@ -587,6 +744,7 @@ class StreamService : LifecycleService(), ConnectChecker {
         private const val VIDEO_BITRATE = 4_500_000
         private const val AUDIO_SAMPLE_RATE = 44_100
         private const val AUDIO_BITRATE = 128_000
+        private const val OVERLAY_SURFACE_MAX_SIDE = 720
         private const val CAMERA_SURFACE_WIDTH = 640
         private const val CAMERA_SURFACE_HEIGHT = 360
     }

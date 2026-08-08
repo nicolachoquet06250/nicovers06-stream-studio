@@ -168,17 +168,20 @@ Windows : `.\gradlew.bat :app:assembleDebug`.
 - Encodage + RTMP/RTMPS RootEncoder
 - Foreground service typé
 
+**Chat live (implémenté)**
+
+- Twitch IRC WebSocket (`stream/chat/TwitchIrcChatClient`) : lecture anonyme `justinfan` ou OAuth `chat:read` + login
+- YouTube Live Chat polling (`stream/chat/YouTubeLiveChatClient`) : `videos.list` → `liveChatMessages.list` avec jeton OAuth collé en mémoire
+- Coordinateur dans `StreamService` ; pas de secrets OAuth en dur ni persistés
+
 **Non implémenté (ne pas prétendre le contraire)**
 
-- Vrais feeds chat Twitch EventSub/IRC ou YouTube LiveChatMessages
-- OAuth plateforme
+- Flux OAuth in-app (AppAuth) — jetons collés manuellement pour YouTube / optionnel Twitch
 - Chiffrement Keystore des destinations
 - Profils 480p/1080p / ABR
 - Sources texte, image, navigateur
 - Transitions de scènes, enregistrement local
 - Suite de tests instrumentés multi-OEM
-
-Pour brancher le chat réel : alimenter `ChatComponent.messages` (et le renderer) depuis les APIs ; garder le modèle actuel comme contrat UI/composition.
 
 ---
 

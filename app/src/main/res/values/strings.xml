@@ -13,6 +13,14 @@
     <string name="preview_hint">APERÇU 720p · 30 FPS\nDéplacez et redimensionnez les blocs</string>
     <string name="live_controls">Contrôles du live</string>
     <string name="widgets_label">Widgets</string>
+    <string name="widget_layer_help">Glissez la poignée pour changer la superposition (haut = devant)</string>
+    <string name="widget_layer_handle">Réordonner le widget</string>
+    <string name="add_widget_label">Ajouter un widget</string>
+    <string name="add_widget_button">Ajouter</string>
+    <string name="add_widget_none_available">Tous les widgets sont déjà utilisés dans cette scène</string>
+    <string name="add_widget_max_reached">Maximum atteint pour « %1$s » (%2$d par scène)</string>
+    <string name="add_widget_added">Widget « %1$s » ajouté</string>
+    <string name="widget_max_hint">max %1$d</string>
     <string name="preview_editor_help">Déplacez et redimensionnez les widgets</string>
     <string name="preview_format">16:9 · 720p · 30 FPS</string>
     <string name="screen_capture">Partage d’écran</string>
@@ -31,7 +39,17 @@
     <string name="back_camera">Arrière</string>
     <string name="background_blur">Flouter le fond en temps réel</string>
     <string name="chat_block">Bloc de chat</string>
-    <string name="chat_preview_label">Messages de prévisualisation</string>
+    <string name="chat_live_label">Chat en direct (plateforme)</string>
+    <string name="chat_live_help_twitch">Twitch : indiquez le nom de la chaîne (login). Lecture IRC anonyme possible ; token OAuth chat:read optionnel avec le login du compte propriétaire du token.</string>
+    <string name="chat_live_help_youtube">YouTube : ID ou URL de la vidéo live + jeton OAuth (scope youtube.readonly). Les jetons restent en mémoire uniquement.</string>
+    <string name="chat_live_help_custom">Destination personnalisée : utilisez les messages de prévisualisation, ou choisissez Twitch/YouTube pour le chat réel.</string>
+    <string name="twitch_channel_hint">Chaîne Twitch (ex. monpseudo)</string>
+    <string name="twitch_login_hint">Login du compte OAuth (optionnel)</string>
+    <string name="twitch_oauth_hint">Token OAuth Twitch chat:read (optionnel, mémoire)</string>
+    <string name="youtube_video_hint">ID ou URL de la vidéo YouTube live</string>
+    <string name="youtube_token_hint">Jeton OAuth YouTube (mémoire uniquement)</string>
+    <string name="connect_live_chat">Connecter le chat plateforme</string>
+    <string name="chat_preview_label">Messages de prévisualisation (secours)</string>
     <string name="chat_author_hint">Pseudo (aperçu)</string>
     <string name="chat_message_hint">Message de test</string>
     <string name="add_chat_message">Ajouter au bloc de chat</string>
@@ -41,7 +59,7 @@
     <string name="stream_key_label">Clé de stream</string>
     <string name="server_url_hint">URL du serveur RTMP(S)</string>
     <string name="stream_key_hint">Clé de stream</string>
-    <string name="stream_key_notice">La clé reste uniquement en mémoire et n’est jamais enregistrée. Le chat Twitch/YouTube réel nécessitera l’étape OAuth suivante.</string>
+    <string name="stream_key_notice">La clé de stream et les jetons OAuth restent uniquement en mémoire et ne sont jamais enregistrés ni journalisés.</string>
     <string name="start_stream">Lancer le stream</string>
     <string name="active_widgets_default">● 3 widgets actifs</string>
     <plurals name="active_widgets_count">
@@ -49,4 +67,6 @@
         <item quantity="other">● %d widgets actifs</item>
     </plurals>
     <string name="numbered_scene">Scène %1$d</string>
+    <string name="widget_dropdown_placeholder">Choisir un widget…</string>
+    <string name="keep_aspect_ratio">Garder le ratio</string>
 </resources>

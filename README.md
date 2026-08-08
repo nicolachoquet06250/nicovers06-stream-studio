@@ -8,13 +8,17 @@ L'application de quickstart as été générée par [android-qs-app-generator](h
 
 - éditeur de scènes 16:9 avec création, sélection, suppression et persistance locale ;
 - interface sombre adaptative : panneaux côte à côte sur fenêtre large et empilés progressivement sur mobile, portrait ou fenêtre Samsung DeX réduite ;
+- catalogue de widgets (`WidgetModules`) avec plafond d’instances par scène et dropdown d’ajout ;
+- ordre de superposition des widgets (`layerOrder`) : drag & drop par poignée dans la sidebar (haut = devant), appliqué immédiatement à la scène, l’aperçu et le flux ;
 - blocs écran, caméra et chat déplaçables/redimensionnables directement dans l’aperçu ;
 - partage de l’écran ou d’une application via `MediaProjection`, composé dans le bloc écran ;
 - microphone, avec une vraie piste AAC silencieuse lorsqu’il est désactivé ;
 - caméra avant/arrière via CameraX ;
 - orientation de l’image caméra synchronisée avec le device, rotations à 90° et 180° comprises ;
 - segmentation du sujet et flou du décor en temps réel ;
-- rendu du chat dans la composition vidéo ;
+
+- **Garder le ratio** (partage d??cran / cam?ra) : verrouille le ratio du cadre au resize ; sinon cadre libre et vid?o **center-crop** (jamais d?form?e).
+- rendu du chat dans la composition vidéo (prévisualisation + chat réel Twitch IRC / YouTube Live Chat) ;
 - encodage H.264/AAC en 1280×720 à 30 FPS ;
 - diffusion RTMP/RTMPS via RootEncoder ;
 - foreground service typé caméra, microphone et media projection ;
@@ -60,7 +64,7 @@ L’APK de debug est généré dans `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Lancer un stream
 
-1. Activez les sources de la scène et positionnez les blocs écran/caméra/chat.
+1. Ajoutez les widgets via le dropdown **Ajouter un widget** (chaque type a un maximum par scène, actuellement 1), activez/désactivez-les avec les interrupteurs, réordonnez-les via la poignée (haut = devant), puis positionnez les blocs écran/caméra/chat.
 2. Dans **Partage d’écran**, appuyez sur **Choisir l’écran ou l’application** et validez la source dans le sélecteur Android.
 3. Vérifiez immédiatement le contenu capturé dans le bloc **ÉCRAN** de la scène.
 4. Choisissez Twitch, YouTube ou une destination personnalisée.
@@ -80,7 +84,27 @@ Le serveur exact peut varier selon le compte ou la région : l’URL affichée p
 
 ## État du bloc de chat
 
-Le bloc est entièrement composé dans le flux et accepte des messages de prévisualisation. La lecture des messages réels Twitch/YouTube n’est pas activée dans ce premier MVP, car elle requiert l’enregistrement d’applications, OAuth et les identifiants propres au projet. L’intégration suivante devra alimenter `ChatComponent.messages` depuis les API Twitch EventSub/IRC et YouTube LiveChatMessages ; aucun secret OAuth ne doit être embarqué en dur dans l’APK.
+Le bloc est composé dans le flux (aperçu + RTMP). Deux modes :
+
+### Chat plateforme (réel)
+
+- **Twitch** — connexion IRC WebSocket officielle (`wss://irc-ws.chat.twitch.tv:443`, tags `twitch.tv/tags`).  
+  - Champ **chaîne** (login) obligatoire.  
+  - Lecture **anonyme** (`justinfan…`) par défaut.  
+  - Optionnel : token utilisateur OAuth scope `chat:read` + **login** du compte propriétaire du token (exigence IRC Twitch).
+- **YouTube** — polling Live Streaming API :  
+  1. `videos.list?part=liveStreamingDetails` → `activeLiveChatId`  
+  2. `liveChatMessages.list` avec `pollingIntervalMillis`  
+  - ID/URL de la **vidéo live** + **jeton OAuth** scope `youtube.readonly` (ou `youtube.force-ssl`).  
+  - Le live doit être démarré pour exposer un `activeLiveChatId`.
+
+Les jetons OAuth et la clé de stream restent **uniquement en mémoire** (champs mot de passe, extras Intent) : jamais SharedPreferences, fichiers ni logs. Aucun client secret n’est embarqué dans l’APK ; vous collez un jeton obtenu hors de l’app (console Google / flux OAuth de votre projet Twitch).
+
+Bouton **Connecter le chat plateforme** : démarre l’ingestion dès l’aperçu. Au lancement du stream, la même config est renvoyée au service.
+
+### Prévisualisation
+
+Messages manuels de secours si aucune source live n’est connectée (destination personnalisée, ou champs incomplets).
 
 ## Choix techniques
 
@@ -98,7 +122,7 @@ Le bloc est entièrement composé dans le flux et accepte des messages de prévi
 
 ## Prochaines étapes recommandées
 
-- OAuth Twitch et Google/YouTube puis fournisseurs de chat réels ;
+- flux OAuth in-app (AppAuth) pour éviter le collage manuel des jetons ;
 - chiffrement local des destinations enregistrées avec Android Keystore ;
 - profils qualité 480p/720p/1080p et adaptation du débit ;
 - ajout de sources texte, image et navigateur ;

@@ -46,4 +46,5 @@ dependencies {
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
     // 2.7.2 is the latest RootEncoder line compiled against Android API 36.
     implementation("com.github.pedroSG94.RootEncoder:library:2.7.2")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
