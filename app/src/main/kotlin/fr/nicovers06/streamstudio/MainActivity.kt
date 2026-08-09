@@ -38,11 +38,13 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import fr.nicovers06.streamstudio.data.SceneImageStore
+import fr.nicovers06.streamstudio.data.SceneMediaStore
 import fr.nicovers06.streamstudio.data.SceneRepository
 import fr.nicovers06.streamstudio.databinding.ActivityMainBinding
 import fr.nicovers06.streamstudio.model.CameraFacing
 import fr.nicovers06.streamstudio.model.ImageComponent
 import fr.nicovers06.streamstudio.model.LayerRef
+import fr.nicovers06.streamstudio.model.NativeWidgetComponent
 import fr.nicovers06.streamstudio.model.ChatComponent
 import fr.nicovers06.streamstudio.model.ChatMessage
 import fr.nicovers06.streamstudio.model.StreamScene
@@ -56,8 +58,10 @@ import fr.nicovers06.streamstudio.stream.chat.LiveChatPlatform
 import fr.nicovers06.streamstudio.stream.chat.TwitchIrcChatClient
 import fr.nicovers06.streamstudio.stream.chat.YouTubeLiveChatClient
 import fr.nicovers06.streamstudio.ui.ComponentBoundsView
+import fr.nicovers06.streamstudio.ui.NativeWidgetControlView
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     private data class PlatformPreset(val label: String, val server: String)
@@ -68,6 +72,7 @@ class MainActivity : Activity() {
     private lateinit var repository: SceneRepository
     private val mainHandler = Handler(Looper.getMainLooper())
     private val saveScenes = Runnable { repository.save(scenes) }
+    private val mediaImportExecutor = Executors.newSingleThreadExecutor()
     private var scenes = mutableListOf<StreamScene>()
     private var selectedSceneIndex = 0
     private var rendering = false
@@ -83,7 +88,10 @@ class MainActivity : Activity() {
     private var reorderingLayers = false
     private val imageBoundsViews = linkedMapOf<String, ComponentBoundsView>()
     private val imageWidgetBlocks = linkedMapOf<String, LinearLayout>()
+    private val nativeWidgetBoundsViews = linkedMapOf<String, ComponentBoundsView>()
+    private val nativeWidgetBlocks = linkedMapOf<String, NativeWidgetControlView>()
     private var pendingImagePickId: String? = null
+    private var pendingMediaPickId: String? = null
 
     private fun runWhenStarted(block: () -> Unit) {
         runOnUiThread callback@{
@@ -203,6 +211,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacksAndMessages(null)
+        mediaImportExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -364,6 +373,7 @@ class MainActivity : Activity() {
             }
         }
         syncImageWidgets(scene)
+        syncNativeWidgets(scene)
         applyWidgetStackOrder(scene.normalizedLayerOrder())
         applyPreviewLayerOrder(scene.normalizedLayerOrder())
         rendering = false
@@ -387,7 +397,12 @@ class MainActivity : Activity() {
             listOf(getString(R.string.add_widget_none_available))
         } else {
             addableWidgetModules.map { module ->
-                "${module.label} (${getString(R.string.widget_max_hint, module.maxInstancesPerScene)})"
+                val limit = if (module.maxInstancesPerScene == Int.MAX_VALUE) {
+                    getString(R.string.widget_unlimited_hint)
+                } else {
+                    getString(R.string.widget_max_hint, module.maxInstancesPerScene)
+                }
+                "${module.label} ($limit)"
             }
         }
         binding.addWidgetSpinner.adapter = spinnerAdapter(labels)
@@ -404,13 +419,16 @@ class MainActivity : Activity() {
         }
         val scene = currentScene()
         if (!WidgetModules.canAdd(scene, module.type)) {
-            showMessage(
+            val message = if (module.maxInstancesPerScene == Int.MAX_VALUE) {
+                getString(R.string.add_widget_unlimited_reached, module.label)
+            } else {
                 getString(
                     R.string.add_widget_max_reached,
                     module.label,
                     module.maxInstancesPerScene,
-                ),
-            )
+                )
+            }
+            showMessage(message)
             refreshAddWidgetSpinner()
             return
         }
@@ -456,6 +474,37 @@ class MainActivity : Activity() {
                 }
                 openImagePicker(image.id)
             }
+            WidgetType.TIMER,
+            WidgetType.SHAPE,
+            WidgetType.BACKGROUND,
+            WidgetType.TICKER,
+            WidgetType.MEDIA,
+            WidgetType.ALERT,
+            WidgetType.POLL,
+            WidgetType.TEXT,
+            -> {
+                val widget = NativeWidgetComponent.create(
+                    module.type,
+                    WidgetModules.instanceCount(scene, module.type) + 1,
+                )
+                updateScene {
+                    val next = it.copy(
+                        nativeWidgets = StreamScene.sanitizeNativeWidgets(it.nativeWidgets + widget),
+                    )
+                    if (widget.type == WidgetType.BACKGROUND) {
+                        next.copy(layerOrder = next.normalizedLayerOrder())
+                    } else {
+                        next.copy(
+                            layerOrder = WidgetModules.bringToFront(
+                                next.layerOrder,
+                                LayerRef.instance(widget.type, widget.id),
+                                next,
+                            ),
+                        )
+                    }
+                }
+                if (widget.type == WidgetType.MEDIA) openMediaPicker(widget.id)
+            }
         }
         showMessage(getString(R.string.add_widget_added, module.label))
     }
@@ -490,6 +539,10 @@ class MainActivity : Activity() {
     }
 
     private fun attachLayerHandle(handle: View, ref: LayerRef) {
+        if (ref.type == WidgetType.BACKGROUND) {
+            handle.setOnTouchListener(null)
+            return
+        }
         handle.setOnTouchListener { view, event ->
             if (event.actionMasked != MotionEvent.ACTION_DOWN) return@setOnTouchListener false
             val block = widgetBlock(ref) ?: return@setOnTouchListener false
@@ -514,6 +567,15 @@ class MainActivity : Activity() {
         WidgetType.CHAT -> binding.chatWidgetBlock
         WidgetType.MICROPHONE -> binding.microphoneWidgetBlock
         WidgetType.IMAGE -> imageWidgetBlocks[ref.instanceId]
+        WidgetType.TIMER,
+        WidgetType.SHAPE,
+        WidgetType.BACKGROUND,
+        WidgetType.TICKER,
+        WidgetType.MEDIA,
+        WidgetType.ALERT,
+        WidgetType.POLL,
+        WidgetType.TEXT,
+        -> nativeWidgetBlocks[ref.instanceId]
     }
 
     private fun boundsView(ref: LayerRef): View? = when (ref.type) {
@@ -522,6 +584,15 @@ class MainActivity : Activity() {
         WidgetType.CHAT -> binding.chatBounds
         WidgetType.MICROPHONE -> null
         WidgetType.IMAGE -> imageBoundsViews[ref.instanceId]
+        WidgetType.TIMER,
+        WidgetType.SHAPE,
+        WidgetType.TICKER,
+        WidgetType.MEDIA,
+        WidgetType.ALERT,
+        WidgetType.POLL,
+        WidgetType.TEXT,
+        -> nativeWidgetBoundsViews[ref.instanceId]
+        WidgetType.BACKGROUND -> null
     }
 
     private fun insertIndexForY(stack: LinearLayout, y: Float): Int {
@@ -538,10 +609,20 @@ class MainActivity : Activity() {
     }
 
     private fun moveWidgetBlock(stack: LinearLayout, ref: LayerRef, targetIndex: Int) {
+        if (ref.type == WidgetType.BACKGROUND) return
         val block = widgetBlock(ref) ?: return
         val from = stack.indexOfChild(block)
         if (from < 0) return
-        val desired = targetIndex.coerceIn(0, (stack.childCount - 1).coerceAtLeast(0))
+        val backgroundIndex = (0 until stack.childCount).firstOrNull { index ->
+            val layer = LayerRef.parse(stack.getChildAt(index).tag as? String ?: return@firstOrNull false)
+            layer?.type == WidgetType.BACKGROUND
+        }
+        val lastAllowedIndex = if (backgroundIndex == null) {
+            (stack.childCount - 1).coerceAtLeast(0)
+        } else {
+            (backgroundIndex - 1).coerceAtLeast(0)
+        }
+        val desired = targetIndex.coerceIn(0, lastAllowedIndex)
         if (from == desired) return
         stack.removeView(block)
         stack.addView(block, desired.coerceAtMost(stack.childCount))
@@ -571,6 +652,7 @@ class MainActivity : Activity() {
         val stack = binding.widgetStack
         val scene = currentScene()
         syncImageWidgetBlocks(scene)
+        syncNativeWidgetBlocks(scene)
         val normalized = WidgetModules.normalizeLayerOrder(orderFrontFirst, scene)
         normalized.forEachIndexed { index, ref ->
             val block = widgetBlock(ref) ?: return@forEachIndexed
@@ -770,7 +852,7 @@ class MainActivity : Activity() {
 
     private fun prepareBroadcast() {
         val scene = currentScene()
-        if (!scene.screen.enabled && !scene.camera.enabled && !scene.chat.enabled) {
+        if (!scene.hasEnabledVisualWidget()) {
             showMessage("Activez au moins une source visuelle")
             return
         }
@@ -875,6 +957,10 @@ class MainActivity : Activity() {
             handleImagePickResult(resultCode, data)
             return
         }
+        if (requestCode == REQUEST_PICK_MEDIA) {
+            handleMediaPickResult(resultCode, data)
+            return
+        }
         if (requestCode != REQUEST_SCREEN_SELECTION) return
         if (resultCode == RESULT_OK && data != null) {
             screenCapturePreparing = true
@@ -946,10 +1032,174 @@ class MainActivity : Activity() {
         showMessage(getString(R.string.image_pick_success))
     }
 
+    private fun openMediaPicker(widgetId: String) {
+        pendingMediaPickId = widgetId
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "video/*"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { startActivityForResult(intent, REQUEST_PICK_MEDIA) }
+            .onFailure {
+                pendingMediaPickId = null
+                showMessage(getString(R.string.native_widget_media_failed))
+            }
+    }
+
+    private fun handleMediaPickResult(resultCode: Int, data: Intent?) {
+        val widgetId = pendingMediaPickId
+        pendingMediaPickId = null
+        if (widgetId == null) return
+        if (resultCode != RESULT_OK || data?.data == null) {
+            showMessage(getString(R.string.native_widget_media_cancelled))
+            return
+        }
+        val uri = data.data!!
+        mediaImportExecutor.execute {
+            val imported = SceneMediaStore.importFromUri(applicationContext, uri)
+            runOnUiThread mediaImported@{
+                if (isFinishing || isDestroyed) {
+                    imported?.let { SceneMediaStore.delete(applicationContext, it.fileName) }
+                    return@mediaImported
+                }
+                if (imported == null) {
+                    showMessage(getString(R.string.native_widget_media_failed))
+                    return@mediaImported
+                }
+                if (currentScene().nativeWidget(widgetId)?.type != WidgetType.MEDIA) {
+                    SceneMediaStore.delete(this, imported.fileName)
+                    return@mediaImported
+                }
+                updateScene { scene ->
+                    val old = scene.nativeWidget(widgetId)
+                    val previousFile = old?.mediaFileName.orEmpty()
+                    if (previousFile.isNotBlank() && previousFile != imported.fileName) {
+                        SceneMediaStore.delete(this, previousFile)
+                    }
+                    scene.copy(
+                        nativeWidgets = scene.nativeWidgets.map { widget ->
+                            if (widget.id != widgetId) widget
+                            else widget.copy(
+                                mediaFileName = imported.fileName,
+                                mediaDisplayName = imported.displayName,
+                            )
+                        },
+                    )
+                }
+                showMessage(getString(R.string.native_widget_media_success))
+            }
+        }
+    }
+
     private fun syncImageWidgets(scene: StreamScene) {
         syncImageWidgetBlocks(scene)
         syncImageBoundsViews(scene)
         attachStaticLayerHandles()
+    }
+
+    private fun syncNativeWidgets(scene: StreamScene) {
+        syncNativeWidgetBlocks(scene)
+        syncNativeWidgetBoundsViews(scene)
+    }
+
+    private fun syncNativeWidgetBoundsViews(scene: StreamScene) {
+        val preview = binding.previewFrame
+        val editableWidgets = scene.nativeWidgets.filter { it.type != WidgetType.BACKGROUND }
+        val liveIds = editableWidgets.map { it.id }.toSet()
+        nativeWidgetBoundsViews.keys.filter { it !in liveIds }.toList().forEach { id ->
+            nativeWidgetBoundsViews.remove(id)?.let { preview.removeView(it) }
+        }
+        editableWidgets.forEach { widget ->
+            val view = nativeWidgetBoundsViews.getOrPut(widget.id) {
+                ComponentBoundsView(this).also { boundsView ->
+                    boundsView.layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                    )
+                    preview.addView(boundsView)
+                }
+            }
+            view.bind(
+                widget.bounds,
+                widget.enabled,
+                nativeWidgetLabel(scene, widget),
+                keepAspectRatio = widget.type == WidgetType.MEDIA && widget.mediaKeepAspectRatio,
+            ) { bounds ->
+                updateScene(debounceSave = true, render = false) { currentScene ->
+                    currentScene.copy(
+                        nativeWidgets = currentScene.nativeWidgets.map { current ->
+                            if (current.id == widget.id) current.copy(bounds = bounds) else current
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    private fun syncNativeWidgetBlocks(scene: StreamScene) {
+        val stack = binding.widgetStack
+        val liveIds = scene.nativeWidgets.map { it.id }.toSet()
+        nativeWidgetBlocks.keys.filter { it !in liveIds }.toList().forEach { id ->
+            nativeWidgetBlocks.remove(id)?.let { stack.removeView(it) }
+        }
+        scene.nativeWidgets.forEach { widget ->
+            val ref = LayerRef.instance(widget.type, widget.id)
+            val block = nativeWidgetBlocks.getOrPut(widget.id) {
+                NativeWidgetControlView(this, widget.type).also { control ->
+                    control.tag = ref.storageKey()
+                    stack.addView(control)
+                }
+            }
+            block.tag = ref.storageKey()
+            attachLayerHandle(block.layerHandle, ref)
+            block.bind(
+                widget = widget,
+                displayLabel = nativeWidgetLabel(scene, widget),
+                editable = !streaming,
+                runtimeActionsEnabled = true,
+                callbacks = NativeWidgetControlView.Callbacks(
+                    onChanged = { updated ->
+                        if (!streaming || updated.type == WidgetType.TIMER || updated.type == WidgetType.ALERT) {
+                            updateNativeWidget(updated)
+                        }
+                    },
+                    onRemoved = {
+                        if (!streaming) removeNativeWidget(widget.id)
+                    },
+                    onPickMedia = {
+                        if (!streaming) openMediaPicker(widget.id)
+                    },
+                    onValidationError = ::showMessage,
+                ),
+            )
+        }
+    }
+
+    private fun nativeWidgetLabel(scene: StreamScene, widget: NativeWidgetComponent): String {
+        val module = WidgetModules.of(widget.type)
+        val siblings = scene.nativeWidgets.filter { it.type == widget.type }
+        val index = siblings.indexOfFirst { it.id == widget.id }.coerceAtLeast(0) + 1
+        return if (module.maxInstancesPerScene == 1) module.label else "${module.label} $index"
+    }
+
+    private fun updateNativeWidget(updated: NativeWidgetComponent) {
+        updateScene { scene ->
+            scene.copy(
+                nativeWidgets = scene.nativeWidgets.map { current ->
+                    if (current.id != updated.id) current else updated.copy(bounds = current.bounds)
+                },
+            )
+        }
+    }
+
+    private fun removeNativeWidget(widgetId: String) {
+        updateScene { scene ->
+            val target = scene.nativeWidget(widgetId)
+            if (target?.mediaFileName?.isNotBlank() == true) {
+                SceneMediaStore.delete(this, target.mediaFileName)
+            }
+            scene.copy(nativeWidgets = scene.nativeWidgets.filterNot { it.id == widgetId })
+        }
     }
 
     private fun attachStaticLayerHandles() {
@@ -1201,6 +1451,8 @@ class MainActivity : Activity() {
         frontCameraButton.isEnabled = currentScene().camera.enabled
         backCameraButton.isEnabled = currentScene().camera.enabled
         updateScreenSelectionUi()
+        syncImageWidgetBlocks(currentScene())
+        syncNativeWidgetBlocks(currentScene())
     }
 
     private fun updateScreenSelectionUi() = with(binding) {
@@ -1253,6 +1505,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQUEST_PICK_IMAGE = 4401
+        private const val REQUEST_PICK_MEDIA = 4402
         private const val REQUEST_PERMISSIONS = 100
         private const val REQUEST_SCREEN_SELECTION = 101
         private const val KEY_SCENE_INDEX = "scene_index"

@@ -10,16 +10,23 @@ L'application de quickstart as été générée par [android-qs-app-generator](h
 - interface sombre adaptative : panneaux côte à côte sur fenêtre large et empilés progressivement sur mobile, portrait ou fenêtre Samsung DeX réduite ;
 - mode immersif au lancement : barres d’état et de navigation masquées, avec respect des zones système restant visibles et des découpes d’écran ;
 - catalogue de widgets (`WidgetModules`) avec plafond d’instances par scène et dropdown d’ajout ;
-- ordre de superposition des widgets (`layerOrder`) : drag & drop par poignée dans la sidebar (haut = devant), appliqué immédiatement à la scène, l’aperçu et le flux ;
+- ordre de superposition des widgets (`layerOrder`) : drag & drop par poignée dans la sidebar (haut = devant), appliqué immédiatement à la scène, l’aperçu et le flux ; l’arrière-plan est verrouillé tout en bas et ne peut pas être déplacé ;
 - blocs écran, caméra et chat déplaçables/redimensionnables directement dans l’aperçu ;
 - partage de l’écran ou d’une application via `MediaProjection`, composé dans le bloc écran ;
 - microphone, avec une vraie piste AAC silencieuse lorsqu’il est désactivé ;
 - caméra avant/arrière via CameraX ;
 - orientation de l’image caméra synchronisée avec le device, rotations à 90° et 180° comprises ;
 - segmentation du sujet et flou du décor en temps réel ;
-
 - **Garder le ratio** (écran / caméra / image) : verrouille le ratio du cadre au resize ; pour **écran/caméra**, contenu en **crop/cover** si activé, étirement si désactivé ; pour **image**, le contenu est **toujours cropté** (cover, jamais déformé), coché ou non ;
 - widget **Image** : import via le sélecteur système (JPEG, PNG, WebP, GIF, BMP, HEIC/HEIF, AVIF selon l’appareil), copie locale interne, max 10 par scène ;
+- widgets **100 % natifs** (API Android `Canvas`, surfaces et `MediaPlayer`, sans HTML ni WebView) :
+  - minuteur compte à rebours / chronomètre (max 1) ;
+  - formes rectangle, ellipse ou ligne (max 10) et arrière-plan uni / dégradé ancré sous tous les autres widgets (max 1) ;
+  - bandeaux défilants avec vitesse et couleurs configurables (max 2) ;
+  - média vidéo local en boucle optionnelle (max 1, piste audio coupée pour conserver le mix microphone actuel) ;
+  - alertes animées déclenchables depuis l’éditeur (sans limite applicative) ;
+  - sondage / question avec réponses et résultats manuels (max 1) ;
+  - texte libre / lower third (sans limite applicative) ;
 - rendu du chat dans la composition vidéo (prévisualisation + chat réel Twitch IRC / YouTube Live Chat) ;
 - encodage H.264/AAC en 1280×720 à 30 FPS ;
 - diffusion RTMP/RTMPS via RootEncoder ;
@@ -35,7 +42,9 @@ Fond noir → Composition OpenGL RootEncoder
         │     → ML Kit Selfie Segmentation
         │     → sujet net + décor flouté
         │     → SurfaceFilterRender
-        └── Chat → SurfaceFilterRender
+        ├── Chat → SurfaceFilterRender
+        ├── Images / média local → SurfaceFilterRender
+        └── Widgets natifs Canvas → SurfaceFilterRender
         ↓
 H.264 720p / AAC
         ↓
@@ -43,6 +52,8 @@ RTMP ou RTMPS
 ```
 
 La caméra est analysée avec une stratégie `KEEP_ONLY_LATEST`. En mode flou, le masque ML Kit est lissé puis utilisé pour mélanger le sujet original avec une version réellement floutée du décor. Le résultat final est écrit dans la surface du bloc caméra : c’est donc bien le flux modifié, et non la caméra brute, qui est transmis dans la scène.
+
+L’ordre de scène est stocké du premier plan vers l’arrière-plan. Lorsqu’un widget d’arrière-plan existe, la normalisation du modèle le replace systématiquement en dernière position ; le pipeline OpenGL l’installe donc avant les autres filtres, au fond de la composition.
 
 ## Compatibilité Android
 
@@ -75,7 +86,7 @@ L’APK de debug est généré dans `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Lancer un stream
 
-1. Ajoutez les widgets via le dropdown **Ajouter un widget** (chaque type a un maximum par scène, actuellement 1), activez/désactivez-les avec les interrupteurs, réordonnez-les via la poignée (haut = devant), puis positionnez les blocs écran/caméra/chat.
+1. Ajoutez les widgets via le dropdown **Ajouter un widget**, activez/désactivez-les avec les interrupteurs, configurez-les, réordonnez-les via la poignée (haut = devant), puis positionnez les blocs dans l’aperçu. L’arrière-plan constitue l’unique exception : il reste toujours tout en bas. Le dropdown affiche le plafond propre à chaque type ou « illimité ».
 2. Dans **Partage d’écran**, appuyez sur **Choisir l’écran ou l’application** et validez la source dans le sélecteur Android.
 3. Vérifiez immédiatement le contenu capturé dans le bloc **ÉCRAN** de la scène.
 4. Choisissez Twitch, YouTube ou une destination personnalisée.
@@ -136,6 +147,6 @@ Messages manuels de secours si aucune source live n’est connectée (destinatio
 - flux OAuth in-app (AppAuth) pour éviter le collage manuel des jetons ;
 - chiffrement local des destinations enregistrées avec Android Keystore ;
 - profils qualité 480p/720p/1080p et adaptation du débit ;
-- ajout de sources texte, image et navigateur ;
+- connexion des alertes et sondages aux API événementielles Twitch / YouTube ;
 - transitions entre scènes et enregistrement local ;
 - tests instrumentés sur plusieurs fabricants et versions Android.
