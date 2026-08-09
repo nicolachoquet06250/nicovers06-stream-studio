@@ -50,7 +50,7 @@ class ComponentBoundsView @JvmOverloads constructor(
     private var resizing = false
     private val applyLayoutRunnable = Runnable(::applyLayout)
     private val parentLayoutChangeListener = View.OnLayoutChangeListener {
-            _, left, _, right, bottom, oldLeft, _, oldRight, oldBottom ->
+            _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
         if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
             applyLayout()
         }
