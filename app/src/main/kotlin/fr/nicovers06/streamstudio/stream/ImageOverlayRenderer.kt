@@ -11,6 +11,7 @@ import android.graphics.SurfaceTexture
 import android.os.Handler
 import android.os.Looper
 import android.view.Surface
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Dessine une bitmap sur la surface d’un [com.pedro.encoder.input.gl.render.filters.object.SurfaceFilterRender].
@@ -24,6 +25,7 @@ class ImageOverlayRenderer(
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val surface = Surface(surfaceTexture)
+    private val released = AtomicBoolean(false)
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val placeholderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0x66FFFFFF
@@ -44,7 +46,9 @@ class ImageOverlayRenderer(
     }
 
     fun setBitmap(value: Bitmap?, label: String = "Image") {
+        if (released.get()) return
         mainHandler.post {
+            if (released.get()) return@post
             // Ne pas recycler : les bitmaps peuvent être partagées via le cache service.
             bitmap = value
             placeholderLabel = label
@@ -54,14 +58,18 @@ class ImageOverlayRenderer(
 
     fun update(enabled: Boolean, keepAspectRatio: Boolean = true) {
         // keepAspectRatio ignoré pour le dessin : toujours cover/crop (pas d’étirement).
+        if (released.get()) return
         mainHandler.post {
+            if (released.get()) return@post
             this.enabled = enabled
             redraw()
         }
     }
 
     fun resizeBuffer(width: Int, height: Int) {
+        if (released.get()) return
         mainHandler.post {
+            if (released.get()) return@post
             if (width == bufferWidth && height == bufferHeight) return@post
             bufferWidth = width.coerceAtLeast(2)
             bufferHeight = height.coerceAtLeast(2)
@@ -73,15 +81,19 @@ class ImageOverlayRenderer(
     }
 
     fun release() {
-        mainHandler.removeCallbacksAndMessages(null)
-        bitmap = null
-        surface.release()
+        if (!released.compareAndSet(false, true)) return
+        mainHandler.post {
+            mainHandler.removeCallbacksAndMessages(null)
+            bitmap = null
+            runCatching { surface.release() }
+        }
     }
 
     private fun redraw() {
-        if (!surface.isValid) return
+        if (released.get() || !surface.isValid) return
         val canvas = runCatching { surface.lockCanvas(null) }.getOrNull() ?: return
         try {
+            if (released.get()) return
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
             if (!enabled) return
             val w = canvas.width.takeIf { it > 0 } ?: bufferWidth
@@ -100,8 +112,10 @@ class ImageOverlayRenderer(
             matrix.setScale(scale, scale)
             matrix.postTranslate(dx, dy)
             canvas.drawBitmap(bmp, matrix, bitmapPaint)
+        } catch (_: RuntimeException) {
+            // Le filtre GL peut remplacer sa SurfaceTexture pendant ce dessin.
         } finally {
-            surface.unlockCanvasAndPost(canvas)
+            runCatching { surface.unlockCanvasAndPost(canvas) }
         }
     }
 }

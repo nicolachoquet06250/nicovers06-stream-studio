@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class ScreenOverlayPipeline(
     context: Context,
     private val mediaProjection: MediaProjection,
-    private var outputSurface: Surface,
+    @Volatile private var outputSurface: Surface,
     private val captureWidth: Int,
     private val captureHeight: Int,
     private val onStopped: () -> Unit,
@@ -153,6 +153,8 @@ class ScreenOverlayPipeline(
                 RectF(0f, top, canvas.width.toFloat(), top + scaledH)
             }
             canvas.drawBitmap(source, null, dest, paint)
+        } catch (_: RuntimeException) {
+            // La surface de destination peut changer pendant un redimensionnement DeX.
         } finally {
             runCatching { surface.unlockCanvasAndPost(canvas) }
         }

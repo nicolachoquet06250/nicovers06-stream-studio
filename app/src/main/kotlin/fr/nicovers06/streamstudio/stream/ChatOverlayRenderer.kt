@@ -12,12 +12,14 @@ import android.text.TextPaint
 import android.text.TextUtils
 import android.view.Surface
 import fr.nicovers06.streamstudio.model.ChatMessage
+import java.util.concurrent.atomic.AtomicBoolean
 
 class ChatOverlayRenderer(surfaceTexture: SurfaceTexture) {
     private val width = 640
     private val height = 360
     private val mainHandler = Handler(Looper.getMainLooper())
     private val surface: Surface
+    private val released = AtomicBoolean(false)
     private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xD9141821.toInt() }
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFF2C3442.toInt()
@@ -45,18 +47,25 @@ class ChatOverlayRenderer(surfaceTexture: SurfaceTexture) {
     }
 
     fun update(messages: List<ChatMessage>, enabled: Boolean) {
-        mainHandler.post { draw(messages.takeLast(4), enabled) }
+        if (released.get()) return
+        mainHandler.post {
+            if (!released.get()) draw(messages.takeLast(4), enabled)
+        }
     }
 
     fun release() {
-        mainHandler.removeCallbacksAndMessages(null)
-        surface.release()
+        if (!released.compareAndSet(false, true)) return
+        mainHandler.post {
+            mainHandler.removeCallbacksAndMessages(null)
+            runCatching { surface.release() }
+        }
     }
 
     private fun draw(messages: List<ChatMessage>, enabled: Boolean) {
-        if (!surface.isValid) return
+        if (released.get() || !surface.isValid) return
         val canvas = runCatching { surface.lockCanvas(null) }.getOrNull() ?: return
         try {
+            if (released.get()) return
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
             if (!enabled) return
             val panel = RectF(2f, 2f, width - 2f, height - 2f)
@@ -75,8 +84,10 @@ class ChatOverlayRenderer(surfaceTexture: SurfaceTexture) {
                 canvas.drawText(text, 34f + authorWidth, y, messagePaint)
                 y += 62f
             }
+        } catch (_: RuntimeException) {
+            // Le filtre GL peut remplacer sa SurfaceTexture pendant ce dessin.
         } finally {
-            surface.unlockCanvasAndPost(canvas)
+            runCatching { surface.unlockCanvasAndPost(canvas) }
         }
     }
 }

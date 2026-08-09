@@ -22,7 +22,8 @@ class ResponsiveStudioLayout @JvmOverloads constructor(
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val availableWidth = MeasureSpec.getSize(widthMeasureSpec) - paddingStart - paddingEnd
+        val availableWidth = (MeasureSpec.getSize(widthMeasureSpec) - paddingStart - paddingEnd)
+            .coerceAtLeast(0)
         val useWideLayout = availableWidth >= dp(WIDE_BREAKPOINT_DP)
         configureChildren(useWideLayout, availableWidth)
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
@@ -35,8 +36,8 @@ class ResponsiveStudioLayout @JvmOverloads constructor(
             orientation = if (wide) HORIZONTAL else VERTICAL
         }
 
-        val editorParams = getChildAt(0).layoutParams as LayoutParams
-        val controlsParams = getChildAt(1).layoutParams as LayoutParams
+        val editorParams = getChildAt(0).layoutParams as? LayoutParams ?: return
+        val controlsParams = getChildAt(1).layoutParams as? LayoutParams ?: return
         if (wide) {
             val controlsWidth = (availableWidth * CONTROLS_WIDTH_RATIO).roundToInt()
                 .coerceIn(dp(MIN_CONTROLS_WIDTH_DP), dp(MAX_CONTROLS_WIDTH_DP))

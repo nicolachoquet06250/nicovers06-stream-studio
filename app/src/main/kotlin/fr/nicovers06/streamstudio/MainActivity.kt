@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
@@ -66,7 +67,8 @@ class MainActivity : Activity() {
     private var scenes = mutableListOf<StreamScene>()
     private var selectedSceneIndex = 0
     private var rendering = false
-    private var bound = false
+    private var uiStarted = false
+    private var serviceBindingRequested = false
     private var service: StreamService? = null
     private var pendingBroadcast: PendingBroadcast? = null
     private var screenCapturePrepared = false
@@ -79,28 +81,35 @@ class MainActivity : Activity() {
     private val imageWidgetBlocks = linkedMapOf<String, LinearLayout>()
     private var pendingImagePickId: String? = null
 
+    private fun runWhenStarted(block: () -> Unit) {
+        runOnUiThread callback@{
+            if (!uiStarted || isFinishing || isDestroyed) return@callback
+            block()
+        }
+    }
+
     private val streamListener = object : StreamService.Listener {
-        override fun onStateChanged(isStreaming: Boolean, status: String) = runOnUiThread {
+        override fun onStateChanged(isStreaming: Boolean, status: String) = runWhenStarted {
             streaming = isStreaming
             updateStreamingUi(status)
         }
 
-        override fun onScreenCaptureChanged(isReady: Boolean) = runOnUiThread {
+        override fun onScreenCaptureChanged(isReady: Boolean) = runWhenStarted {
             screenCapturePrepared = isReady
             screenCapturePreparing = false
             updateScreenSelectionUi()
         }
 
-        override fun onBitrateChanged(bitsPerSecond: Long) = runOnUiThread {
+        override fun onBitrateChanged(bitsPerSecond: Long) = runWhenStarted {
             if (streaming) {
                 val megabits = bitsPerSecond / 1_000_000.0
                 binding.statusText.text = String.format(Locale.FRANCE, "EN DIRECT · %.1f Mb/s", megabits)
             }
         }
 
-        override fun onWarning(message: String) = runOnUiThread { showMessage(message) }
+        override fun onWarning(message: String) = runWhenStarted { showMessage(message) }
 
-        override fun onLiveChatMessages(messages: List<ChatMessage>) = runOnUiThread {
+        override fun onLiveChatMessages(messages: List<ChatMessage>) = runWhenStarted {
             // Overlay is updated by the service; toast only on first batch if needed.
         }
     }
@@ -108,8 +117,11 @@ class MainActivity : Activity() {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             val localService = (binder as StreamService.LocalBinder).service
+            if (!uiStarted || !serviceBindingRequested) {
+                localService.clearListener(streamListener)
+                return
+            }
             service = localService
-            bound = true
             localService.setListener(streamListener)
             localService.applyScene(currentScene())
             localService.attachPreview(binding.streamPreview)
@@ -124,12 +136,13 @@ class MainActivity : Activity() {
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
-            bound = false
             service = null
             screenCapturePrepared = false
             screenCapturePreparing = false
-            binding.previewHint.visibility = View.VISIBLE
-            updateScreenSelectionUi()
+            if (uiStarted && !isFinishing && !isDestroyed) {
+                binding.previewHint.visibility = View.VISIBLE
+                updateScreenSelectionUi()
+            }
         }
     }
 
@@ -154,20 +167,38 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
-        if (!bound) bindService(Intent(this, StreamService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
+        uiStarted = true
+        if (!serviceBindingRequested) {
+            serviceBindingRequested = runCatching {
+                bindService(Intent(this, StreamService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
+            }.getOrDefault(false)
+            if (!serviceBindingRequested) showMessage("Service d’aperçu indisponible")
+        }
     }
 
     override fun onStop() {
+        uiStarted = false
         mainHandler.removeCallbacks(saveScenes)
         repository.save(scenes)
-        if (bound) {
-            service?.detachPreview()
-            service?.setListener(null)
-            unbindService(serviceConnection)
-            bound = false
-            service = null
+        service?.detachPreview(binding.streamPreview)
+        service?.clearListener(streamListener)
+        if (serviceBindingRequested) {
+            runCatching { unbindService(serviceConnection) }
         }
+        serviceBindingRequested = false
+        service = null
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null)
+        super.onDestroy()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        binding.responsiveStudioLayout.requestLayout()
+        binding.previewFrame.requestLayout()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
