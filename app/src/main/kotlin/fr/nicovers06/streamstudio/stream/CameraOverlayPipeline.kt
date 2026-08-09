@@ -54,6 +54,8 @@ class CameraOverlayPipeline(
     private val analyzerExecutor = Executors.newSingleThreadExecutor()
     private val processing = AtomicBoolean(false)
     private val blurFallbackNotified = AtomicBoolean(false)
+    private val released = AtomicBoolean(false)
+    private val analyzerResourcesReleased = AtomicBoolean(false)
     @Suppress("DEPRECATION")
     private val renderScript = runCatching { RenderScript.create(context.applicationContext) }.getOrNull()
     @Suppress("DEPRECATION")
@@ -80,7 +82,7 @@ class CameraOverlayPipeline(
     private var imageAnalysis: ImageAnalysis? = null
     private val orientationListener = object : OrientationEventListener(context.applicationContext) {
         override fun onOrientationChanged(orientation: Int) {
-            if (orientation == ORIENTATION_UNKNOWN) return
+            if (released.get() || orientation == ORIENTATION_UNKNOWN) return
             val rotation = when (orientation) {
                 in 45 until 135 -> Surface.ROTATION_270
                 in 135 until 225 -> Surface.ROTATION_180
@@ -89,11 +91,14 @@ class CameraOverlayPipeline(
             }
             if (rotation == targetRotation) return
             targetRotation = rotation
-            mainHandler.post { imageAnalysis?.targetRotation = rotation }
+            mainHandler.post {
+                if (!released.get()) imageAnalysis?.targetRotation = rotation
+            }
         }
     }
 
     fun start(backgroundBlur: Boolean, cameraFacing: CameraFacing) {
+        if (released.get()) return
         if (running) {
             update(backgroundBlur, cameraFacing)
             return
@@ -106,16 +111,18 @@ class CameraOverlayPipeline(
         }
         running = true
         mainHandler.post {
-            if (orientationListener.canDetectOrientation()) orientationListener.enable()
+            if (!released.get() && orientationListener.canDetectOrientation()) orientationListener.enable()
         }
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             runCatching { future.get() }
                 .onSuccess {
+                    if (released.get() || !running) return@onSuccess
                     provider = it
                     bindCamera()
                 }
                 .onFailure {
+                    if (released.get()) return@onFailure
                     running = false
                     mainHandler.post { orientationListener.disable() }
                     onError("Caméra indisponible : ${it.message.orEmpty()}")
@@ -124,6 +131,7 @@ class CameraOverlayPipeline(
     }
 
     fun update(backgroundBlur: Boolean, cameraFacing: CameraFacing) {
+        if (released.get()) return
         val facingChanged = facing != cameraFacing
         blurEnabled = backgroundBlur
         facing = cameraFacing
@@ -131,28 +139,62 @@ class CameraOverlayPipeline(
     }
 
     fun stop() {
+        if (released.get()) return
         running = false
         mainHandler.post {
             orientationListener.disable()
-            provider?.unbindAll()
+            imageAnalysis?.let { analysis ->
+                analysis.clearAnalyzer()
+                runCatching { provider?.unbind(analysis) }
+            }
             imageAnalysis = null
         }
         clearSurface()
     }
 
     fun release() {
-        stop()
-        segmenter?.close()
-        @Suppress("DEPRECATION")
-        blurScript?.destroy()
-        @Suppress("DEPRECATION")
-        renderScript?.destroy()
-        analyzerExecutor.shutdown()
-        outputSurface.release()
+        if (!released.compareAndSet(false, true)) return
+        running = false
+        mainHandler.post {
+            orientationListener.disable()
+            imageAnalysis?.let { analysis ->
+                analysis.clearAnalyzer()
+                runCatching { provider?.unbind(analysis) }
+            }
+            imageAnalysis = null
+            provider = null
+            runCatching { outputSurface.release() }
+        }
+        releaseAnalyzerResourcesWhenIdle()
+    }
+
+    private fun releaseAnalyzerResourcesWhenIdle(attempt: Int = 0) {
+        if (analyzerResourcesReleased.get()) return
+        runCatching {
+            analyzerExecutor.execute {
+                if (processing.get()) {
+                    if (attempt < MAX_RELEASE_DRAIN_ATTEMPTS) {
+                        mainHandler.postDelayed(
+                            { releaseAnalyzerResourcesWhenIdle(attempt + 1) },
+                            RELEASE_DRAIN_DELAY_MS,
+                        )
+                    }
+                    return@execute
+                }
+                if (analyzerResourcesReleased.compareAndSet(false, true)) {
+                    runCatching { segmenter?.close() }
+                    @Suppress("DEPRECATION")
+                    runCatching { blurScript?.destroy() }
+                    @Suppress("DEPRECATION")
+                    runCatching { renderScript?.destroy() }
+                    analyzerExecutor.shutdown()
+                }
+            }
+        }
     }
 
     private fun bindCamera() {
-        if (!running) return
+        if (!running || released.get()) return
         val cameraProvider = provider ?: return
         val selector = CameraSelector.Builder()
             .requireLensFacing(
@@ -176,12 +218,12 @@ class CameraOverlayPipeline(
             cameraProvider.bindToLifecycle(lifecycleOwner, selector, analysis)
         }.onFailure {
             if (imageAnalysis === analysis) imageAnalysis = null
-            onError("Impossible d’ouvrir cette caméra : ${it.message.orEmpty()}")
+            if (!released.get()) onError("Impossible d’ouvrir cette caméra : ${it.message.orEmpty()}")
         }
     }
 
     private fun analyze(imageProxy: ImageProxy) {
-        if (!running || !processing.compareAndSet(false, true)) {
+        if (released.get() || !running || !processing.compareAndSet(false, true)) {
             imageProxy.close()
             return
         }
@@ -212,7 +254,7 @@ class CameraOverlayPipeline(
         activeSegmenter.process(InputImage.fromBitmap(frame, 0))
             .addOnSuccessListener(analyzerExecutor) { mask ->
                 handedToRenderer = true
-                if (running) {
+                if (running && !released.get()) {
                     val output = runCatching { compositeBlur(frame, mask) }.getOrElse { frame }
                     render(output)
                 } else {
@@ -222,7 +264,7 @@ class CameraOverlayPipeline(
             }
             .addOnFailureListener(analyzerExecutor) {
                 handedToRenderer = true
-                if (running) render(frame) else {
+                if (running && !released.get()) render(frame) else {
                     frame.recycle()
                     processing.set(false)
                 }
@@ -328,7 +370,7 @@ class CameraOverlayPipeline(
 
     private fun render(bitmap: Bitmap) {
         mainHandler.post {
-            if (!running || !outputSurface.isValid) {
+            if (released.get() || !running || !outputSurface.isValid) {
                 bitmap.recycle()
                 processing.set(false)
                 return@post
@@ -353,8 +395,10 @@ class CameraOverlayPipeline(
                     android.graphics.RectF(0f, top, canvas.width.toFloat(), top + scaledHeight)
                 }
                 canvas.drawBitmap(bitmap, null, destination, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            } catch (_: RuntimeException) {
+                // La SurfaceTexture peut être invalidée par le thread GL pendant un resize.
             } finally {
-                outputSurface.unlockCanvasAndPost(canvas)
+                runCatching { outputSurface.unlockCanvasAndPost(canvas) }
                 bitmap.recycle()
                 processing.set(false)
             }
@@ -363,7 +407,7 @@ class CameraOverlayPipeline(
 
     private fun clearSurface() {
         mainHandler.post {
-            if (!outputSurface.isValid) return@post
+            if (released.get() || !outputSurface.isValid) return@post
             val canvas = runCatching { outputSurface.lockCanvas(null) }.getOrNull() ?: return@post
             try {
                 if (AndroidCapabilities.supportsModernCanvasClear()) {
@@ -372,9 +416,16 @@ class CameraOverlayPipeline(
                     @Suppress("DEPRECATION")
                     canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
                 }
+            } catch (_: RuntimeException) {
+                // La surface est en cours de remplacement ; la prochaine frame la redessinera.
             } finally {
-                outputSurface.unlockCanvasAndPost(canvas)
+                runCatching { outputSurface.unlockCanvasAndPost(canvas) }
             }
         }
+    }
+
+    companion object {
+        private const val RELEASE_DRAIN_DELAY_MS = 25L
+        private const val MAX_RELEASE_DRAIN_ATTEMPTS = 200
     }
 }

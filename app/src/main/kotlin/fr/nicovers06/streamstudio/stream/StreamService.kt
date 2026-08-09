@@ -70,7 +70,7 @@ class StreamService : LifecycleService(), ConnectChecker {
 
     private lateinit var stream: GenericStream
     private var prepared = false
-    private var listener: Listener? = null
+    @Volatile private var listener: Listener? = null
     private var mediaProjection: MediaProjection? = null
     private var currentScene = StreamScene()
     private var filtersAdded = false
@@ -90,6 +90,8 @@ class StreamService : LifecycleService(), ConnectChecker {
     private var liveChatConfig = LiveChatConfig()
     private var liveChatMessages: List<ChatMessage> = emptyList()
     private var liveChatActive = false
+    private val previewLease = IdentityLease<TextureView>()
+    private val overlayGeneration = GenerationGate()
 
     override fun onCreate() {
         super.onCreate()
@@ -135,12 +137,17 @@ class StreamService : LifecycleService(), ConnectChecker {
     }
 
     override fun onDestroy() {
+        previewLease.clear()
         listener = null
         liveChatCoordinator.stop()
         liveChatActive = false
         stopScreenCapture()
         releaseOverlayPipelines()
-        if (::stream.isInitialized) stream.release()
+        imageBitmapCache.values.forEach { bitmap ->
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
+        imageBitmapCache.clear()
+        if (::stream.isInitialized) runCatching { stream.release() }
         super.onDestroy()
     }
 
@@ -148,6 +155,10 @@ class StreamService : LifecycleService(), ConnectChecker {
         this.listener = listener
         listener?.onStateChanged(isStreaming(), currentStatus)
         listener?.onScreenCaptureChanged(mediaProjection != null)
+    }
+
+    fun clearListener(expected: Listener) {
+        if (listener === expected) listener = null
     }
 
     fun isStreaming(): Boolean = ::stream.isInitialized && stream.isStreaming
@@ -219,17 +230,34 @@ class StreamService : LifecycleService(), ConnectChecker {
             listener?.onWarning("L’encodeur vidéo n’a pas pu être préparé sur cet appareil")
             return
         }
-        if (stream.isOnPreview) return
+        val ownerChanged = previewLease.claim(textureView)
+        if (!ownerChanged && stream.isOnPreview) return
+        if (stream.isOnPreview && !stopPreviewSession()) {
+            previewLease.release(textureView)
+            listener?.onWarning("Impossible de rattacher l’aperçu à cette fenêtre")
+            return
+        }
         ensureFilters()
         runCatching { stream.startPreview(textureView, true) }
-            .onFailure { listener?.onWarning("Aperçu indisponible : ${it.message.orEmpty()}") }
+            .onFailure {
+                previewLease.release(textureView)
+                listener?.onWarning("Aperçu indisponible : ${it.message.orEmpty()}")
+            }
     }
 
-    fun detachPreview() {
-        if (!stream.isOnPreview) return
+    fun detachPreview(textureView: TextureView) {
+        if (!previewLease.release(textureView)) return
+        stopPreviewSession()
+    }
+
+    private fun stopPreviewSession(): Boolean {
+        if (!stream.isOnPreview) return true
         val keepScreenCapture = !stream.isStreaming && mediaProjection != null
         if (keepScreenCapture) screenPipeline?.detachSurface()
-        stream.stopPreview(true)
+        val stopped = runCatching { stream.stopPreview(true) }
+            .onFailure { listener?.onWarning("L’aperçu n’a pas pu être détaché proprement") }
+            .isSuccess
+        if (!stopped && stream.isOnPreview) return false
         if (!stream.isStreaming) {
             filtersAdded = false
             installedLayerOrder = emptyList()
@@ -239,6 +267,7 @@ class StreamService : LifecycleService(), ConnectChecker {
             chatFilter = null
             imageFilters.clear()
         }
+        return true
     }
 
     fun stopBroadcast() {
@@ -401,57 +430,68 @@ class StreamService : LifecycleService(), ConnectChecker {
     }
 
     private fun createOverlayFilters() {
+        val generation = overlayGeneration.open()
         screenFilter = SurfaceFilterRender(SurfaceFilterRender.SurfaceReadyCallback { texture: SurfaceTexture ->
-            val (sw, sh) = surfaceSizeForBounds(currentScene.screen.bounds)
-            texture.setDefaultBufferSize(sw, sh)
-            screenPipeline?.detachSurface()
-            screenSurface?.release()
-            screenSurface = Surface(texture)
-            if (!ensureScreenPipeline()) {
-                mainHandler.post {
+            mainHandler.post surfaceReady@{
+                if (!overlayGeneration.isCurrent(generation)) return@surfaceReady
+                val (sw, sh) = surfaceSizeForBounds(currentScene.screen.bounds)
+                texture.setDefaultBufferSize(sw, sh)
+                screenPipeline?.detachSurface()
+                runCatching { screenSurface?.release() }
+                screenSurface = Surface(texture)
+                if (!ensureScreenPipeline()) {
                     if (stream.isStreaming) {
                         failStart("La surface de partage d’écran n’a pas pu démarrer")
                     } else {
                         failScreenPreview("La surface d’aperçu du partage d’écran n’a pas pu démarrer")
                     }
                 }
+                applyScene(currentScene)
             }
-            applyScene(currentScene)
         })
         cameraFilter = SurfaceFilterRender(SurfaceFilterRender.SurfaceReadyCallback { texture ->
-            val (cw, ch) = surfaceSizeForBounds(currentScene.camera.bounds)
-            texture.setDefaultBufferSize(cw, ch)
-            cameraPipeline?.release()
-            cameraPipeline = CameraOverlayPipeline(
-                context = applicationContext,
-                lifecycleOwner = this,
-                outputSurface = Surface(texture),
-                onError = { listener?.onWarning(it) },
-            )
-            applyScene(currentScene)
+            mainHandler.post surfaceReady@{
+                if (!overlayGeneration.isCurrent(generation)) return@surfaceReady
+                val (cw, ch) = surfaceSizeForBounds(currentScene.camera.bounds)
+                texture.setDefaultBufferSize(cw, ch)
+                cameraPipeline?.release()
+                cameraPipeline = CameraOverlayPipeline(
+                    context = applicationContext,
+                    lifecycleOwner = this,
+                    outputSurface = Surface(texture),
+                    onError = { listener?.onWarning(it) },
+                )
+                applyScene(currentScene)
+            }
         })
         chatFilter = SurfaceFilterRender(SurfaceFilterRender.SurfaceReadyCallback { texture: SurfaceTexture ->
-            chatRenderer?.release()
-            chatRenderer = ChatOverlayRenderer(texture)
-            applyScene(currentScene)
+            mainHandler.post surfaceReady@{
+                if (!overlayGeneration.isCurrent(generation)) return@surfaceReady
+                chatRenderer?.release()
+                chatRenderer = ChatOverlayRenderer(texture)
+                applyScene(currentScene)
+            }
         })
         currentScene.images.forEach { image ->
-            imageFilters[image.id] = createImageFilter(image)
+            imageFilters[image.id] = createImageFilter(image, generation)
         }
     }
 
-    private fun createImageFilter(image: ImageComponent): SurfaceFilterRender {
+    private fun createImageFilter(image: ImageComponent, generation: Long): SurfaceFilterRender {
         val imageId = image.id
         return SurfaceFilterRender(SurfaceFilterRender.SurfaceReadyCallback { texture: SurfaceTexture ->
-            val component = currentScene.image(imageId) ?: image
-            val (iw, ih) = surfaceSizeForBounds(component.bounds)
-            texture.setDefaultBufferSize(iw, ih)
-            imageRenderers.remove(imageId)?.release()
-            val renderer = ImageOverlayRenderer(texture, iw, ih)
-            imageRenderers[imageId] = renderer
-            bindImageBitmap(component, renderer)
-            renderer.update(component.enabled, component.keepAspectRatio)
-            applyScene(currentScene)
+            mainHandler.post surfaceReady@{
+                if (!overlayGeneration.isCurrent(generation)) return@surfaceReady
+                val component = currentScene.image(imageId) ?: image
+                val (iw, ih) = surfaceSizeForBounds(component.bounds)
+                texture.setDefaultBufferSize(iw, ih)
+                imageRenderers.remove(imageId)?.release()
+                val renderer = ImageOverlayRenderer(texture, iw, ih)
+                imageRenderers[imageId] = renderer
+                bindImageBitmap(component, renderer)
+                renderer.update(component.enabled, component.keepAspectRatio)
+                applyScene(currentScene)
+            }
         })
     }
 
@@ -496,13 +536,14 @@ class StreamService : LifecycleService(), ConnectChecker {
     }
 
     private fun releaseOverlayPipelines(keepScreenCapture: Boolean = false) {
+        overlayGeneration.invalidate()
         if (keepScreenCapture) {
             screenPipeline?.detachSurface()
         } else {
             screenPipeline?.release()
             screenPipeline = null
         }
-        screenSurface?.release()
+        runCatching { screenSurface?.release() }
         screenSurface = null
         cameraPipeline?.release()
         cameraPipeline = null

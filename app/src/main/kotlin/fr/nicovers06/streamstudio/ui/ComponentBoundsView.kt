@@ -48,6 +48,13 @@ class ComponentBoundsView @JvmOverloads constructor(
     private var lastRawX = 0f
     private var lastRawY = 0f
     private var resizing = false
+    private val applyLayoutRunnable = Runnable(::applyLayout)
+    private val parentLayoutChangeListener = View.OnLayoutChangeListener {
+            _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+        if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+            applyLayout()
+        }
+    }
     /**
      * Ratio pixels largeur/hauteur à conserver pendant le resize.
      * `0f` = redimensionnement libre (le flux sera cropé côté composition).
@@ -75,8 +82,22 @@ class ComponentBoundsView @JvmOverloads constructor(
         } else {
             0f
         }
-        post(::applyLayout)
+        removeCallbacks(applyLayoutRunnable)
+        post(applyLayoutRunnable)
         invalidate()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        (parent as? View)?.addOnLayoutChangeListener(parentLayoutChangeListener)
+        removeCallbacks(applyLayoutRunnable)
+        post(applyLayoutRunnable)
+    }
+
+    override fun onDetachedFromWindow() {
+        (parent as? View)?.removeOnLayoutChangeListener(parentLayoutChangeListener)
+        removeCallbacks(applyLayoutRunnable)
+        super.onDetachedFromWindow()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -216,11 +237,17 @@ class ComponentBoundsView @JvmOverloads constructor(
     private fun applyLayout() {
         val parentView = parent as? FrameLayout ?: return
         if (parentView.width == 0 || parentView.height == 0) return
-        layoutParams = (layoutParams as FrameLayout.LayoutParams).apply {
-            width = (normalizedRect.width * parentView.width).roundToInt()
-            height = (normalizedRect.height * parentView.height).roundToInt()
+        val params = layoutParams as? FrameLayout.LayoutParams ?: return
+        val targetWidth = (normalizedRect.width * parentView.width).roundToInt().coerceAtLeast(1)
+        val targetHeight = (normalizedRect.height * parentView.height).roundToInt().coerceAtLeast(1)
+        if (params.width != targetWidth || params.height != targetHeight) {
+            params.width = targetWidth
+            params.height = targetHeight
+            layoutParams = params
         }
-        x = normalizedRect.x * parentView.width
-        y = normalizedRect.y * parentView.height
+        val targetX = normalizedRect.x * parentView.width
+        val targetY = normalizedRect.y * parentView.height
+        if (x != targetX) x = targetX
+        if (y != targetY) y = targetY
     }
 }
