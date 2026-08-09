@@ -16,6 +16,7 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Binder
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.view.Surface
@@ -37,6 +38,7 @@ import fr.nicovers06.streamstudio.model.ImageComponent
 import fr.nicovers06.streamstudio.model.LayerRef
 import fr.nicovers06.streamstudio.model.ChatMessage
 import fr.nicovers06.streamstudio.model.NormalizedRect
+import fr.nicovers06.streamstudio.model.NativeWidgetComponent
 import fr.nicovers06.streamstudio.model.StreamScene
 import fr.nicovers06.streamstudio.model.WidgetModules
 import fr.nicovers06.streamstudio.model.WidgetType
@@ -61,6 +63,8 @@ class StreamService : LifecycleService(), ConnectChecker {
 
     private val binder = LocalBinder()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private lateinit var overlayRenderThread: HandlerThread
+    private lateinit var overlayRenderHandler: Handler
     private val mediaProjectionManager by lazy {
         getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
     }
@@ -80,6 +84,9 @@ class StreamService : LifecycleService(), ConnectChecker {
     private var chatFilter: SurfaceFilterRender? = null
     private val imageFilters = linkedMapOf<String, SurfaceFilterRender>()
     private val imageRenderers = linkedMapOf<String, ImageOverlayRenderer>()
+    private val nativeWidgetFilters = linkedMapOf<String, SurfaceFilterRender>()
+    private val nativeWidgetRenderers = linkedMapOf<String, NativeWidgetOverlayRenderer>()
+    private val mediaPipelines = linkedMapOf<String, MediaOverlayPipeline>()
     private val imageBitmapCache = ConcurrentHashMap<String, android.graphics.Bitmap>()
     private var screenSurface: Surface? = null
     private var screenPipeline: ScreenOverlayPipeline? = null
@@ -96,6 +103,8 @@ class StreamService : LifecycleService(), ConnectChecker {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        overlayRenderThread = HandlerThread("native-widget-renderer").also { it.start() }
+        overlayRenderHandler = Handler(overlayRenderThread.looper)
         stream = GenericStream(applicationContext, this, NoVideoSource(), SilenceAudioSource()).apply {
             getGlInterface().setForceRender(true, OUTPUT_FPS)
         }
@@ -148,6 +157,7 @@ class StreamService : LifecycleService(), ConnectChecker {
         }
         imageBitmapCache.clear()
         if (::stream.isInitialized) runCatching { stream.release() }
+        if (::overlayRenderThread.isInitialized) overlayRenderThread.quitSafely()
         super.onDestroy()
     }
 
@@ -177,8 +187,12 @@ class StreamService : LifecycleService(), ConnectChecker {
         val layerOrder = scene.normalizedLayerOrder()
         val imageIds = scene.images.map { it.id }.toSet()
         val installedImageIds = imageFilters.keys.toSet()
+        val nativeWidgetIds = scene.nativeWidgets.map { it.id }.toSet()
+        val installedNativeWidgetIds = nativeWidgetFilters.keys.toSet()
         val needReinstall = filtersAdded && (
-            installedLayerOrder != layerOrder || installedImageIds != imageIds
+            installedLayerOrder != layerOrder ||
+                installedImageIds != imageIds ||
+                installedNativeWidgetIds != nativeWidgetIds
         )
         if (needReinstall) {
             reinstallFilters(layerOrder)
@@ -206,6 +220,12 @@ class StreamService : LifecycleService(), ConnectChecker {
                 filter.setAlpha(if (image.enabled) 1f else 0f)
             }
         }
+        scene.nativeWidgets.forEach { widget ->
+            nativeWidgetFilters[widget.id]?.let { filter ->
+                applyTransform(filter, widget.bounds)
+                filter.setAlpha(if (widget.enabled) 1f else 0f)
+            }
+        }
 
         cameraPipeline?.let { pipeline ->
             if (scene.camera.enabled) {
@@ -217,6 +237,7 @@ class StreamService : LifecycleService(), ConnectChecker {
         }
         refreshChatOverlay()
         refreshImageOverlays()
+        refreshNativeWidgetOverlays()
         syncLiveChat()
     }
 
@@ -266,6 +287,7 @@ class StreamService : LifecycleService(), ConnectChecker {
             cameraFilter = null
             chatFilter = null
             imageFilters.clear()
+            nativeWidgetFilters.clear()
         }
         return true
     }
@@ -289,6 +311,7 @@ class StreamService : LifecycleService(), ConnectChecker {
             cameraFilter = null
             chatFilter = null
             imageFilters.clear()
+            nativeWidgetFilters.clear()
         }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         currentStatus = "PRÊT"
@@ -418,10 +441,12 @@ class StreamService : LifecycleService(), ConnectChecker {
         cameraFilter?.let { runCatching { gl.removeFilter(it) } }
         chatFilter?.let { runCatching { gl.removeFilter(it) } }
         imageFilters.values.forEach { runCatching { gl.removeFilter(it) } }
+        nativeWidgetFilters.values.forEach { runCatching { gl.removeFilter(it) } }
         screenFilter = null
         cameraFilter = null
         chatFilter = null
         imageFilters.clear()
+        nativeWidgetFilters.clear()
         // Pipelines rattach?s via SurfaceReadyCallback des nouveaux filtres.
         releaseOverlayPipelines(keepScreenCapture = mediaProjection != null)
         createOverlayFilters()
@@ -475,6 +500,9 @@ class StreamService : LifecycleService(), ConnectChecker {
         currentScene.images.forEach { image ->
             imageFilters[image.id] = createImageFilter(image, generation)
         }
+        currentScene.nativeWidgets.forEach { widget ->
+            nativeWidgetFilters[widget.id] = createNativeWidgetFilter(widget, generation)
+        }
     }
 
     private fun createImageFilter(image: ImageComponent, generation: Long): SurfaceFilterRender {
@@ -490,6 +518,41 @@ class StreamService : LifecycleService(), ConnectChecker {
                 imageRenderers[imageId] = renderer
                 bindImageBitmap(component, renderer)
                 renderer.update(component.enabled, component.keepAspectRatio)
+                applyScene(currentScene)
+            }
+        })
+    }
+
+    private fun createNativeWidgetFilter(
+        initial: NativeWidgetComponent,
+        generation: Long,
+    ): SurfaceFilterRender {
+        val widgetId = initial.id
+        return SurfaceFilterRender(SurfaceFilterRender.SurfaceReadyCallback { texture: SurfaceTexture ->
+            mainHandler.post surfaceReady@{
+                if (!overlayGeneration.isCurrent(generation)) return@surfaceReady
+                val component = currentScene.nativeWidget(widgetId) ?: initial
+                val (width, height) = surfaceSizeForBounds(component.bounds)
+                texture.setDefaultBufferSize(width, height)
+                nativeWidgetRenderers.remove(widgetId)?.release()
+                mediaPipelines.remove(widgetId)?.release()
+                if (component.type == WidgetType.MEDIA) {
+                    mediaPipelines[widgetId] = MediaOverlayPipeline(
+                        context = applicationContext,
+                        surfaceTexture = texture,
+                        bufferWidth = width,
+                        bufferHeight = height,
+                        mainHandler = mainHandler,
+                        onError = { message -> listener?.onWarning(message) },
+                    ).also { it.update(component) }
+                } else {
+                    nativeWidgetRenderers[widgetId] = NativeWidgetOverlayRenderer(
+                        surfaceTexture = texture,
+                        bufferWidth = width,
+                        bufferHeight = height,
+                        renderHandler = overlayRenderHandler,
+                    ).also { it.update(component) }
+                }
                 applyScene(currentScene)
             }
         })
@@ -521,6 +584,21 @@ class StreamService : LifecycleService(), ConnectChecker {
                         filter.setAlpha(if (image.enabled) 1f else 0f)
                     }
                 }
+                WidgetType.TIMER,
+                WidgetType.SHAPE,
+                WidgetType.BACKGROUND,
+                WidgetType.TICKER,
+                WidgetType.MEDIA,
+                WidgetType.ALERT,
+                WidgetType.POLL,
+                WidgetType.TEXT,
+                -> {
+                    val widget = currentScene.nativeWidget(ref.instanceId.orEmpty())
+                    if (widget != null) {
+                        applyTransform(filter, widget.bounds)
+                        filter.setAlpha(if (widget.enabled) 1f else 0f)
+                    }
+                }
                 WidgetType.MICROPHONE -> Unit
             }
             gl.addFilter(filter)
@@ -532,6 +610,15 @@ class StreamService : LifecycleService(), ConnectChecker {
         WidgetType.CAMERA -> cameraFilter
         WidgetType.CHAT -> chatFilter
         WidgetType.IMAGE -> imageFilters[ref.instanceId]
+        WidgetType.TIMER,
+        WidgetType.SHAPE,
+        WidgetType.BACKGROUND,
+        WidgetType.TICKER,
+        WidgetType.MEDIA,
+        WidgetType.ALERT,
+        WidgetType.POLL,
+        WidgetType.TEXT,
+        -> nativeWidgetFilters[ref.instanceId]
         WidgetType.MICROPHONE -> null
     }
 
@@ -551,6 +638,10 @@ class StreamService : LifecycleService(), ConnectChecker {
         chatRenderer = null
         imageRenderers.values.forEach { it.release() }
         imageRenderers.clear()
+        nativeWidgetRenderers.values.forEach { it.release() }
+        nativeWidgetRenderers.clear()
+        mediaPipelines.values.forEach { it.release() }
+        mediaPipelines.clear()
     }
 
     private fun refreshImageOverlays() {
@@ -582,6 +673,13 @@ class StreamService : LifecycleService(), ConnectChecker {
             renderer.setBitmap(decoded, image.displayName)
         } else {
             renderer.setBitmap(null, image.displayName)
+        }
+    }
+
+    private fun refreshNativeWidgetOverlays() {
+        currentScene.nativeWidgets.forEach { widget ->
+            nativeWidgetRenderers[widget.id]?.update(widget)
+            mediaPipelines[widget.id]?.update(widget)
         }
     }
 
@@ -702,6 +800,14 @@ class StreamService : LifecycleService(), ConnectChecker {
                 runCatching { filter.surfaceTexture.setDefaultBufferSize(iw, ih) }
             }
             imageRenderers[image.id]?.resizeBuffer(iw, ih)
+        }
+        scene.nativeWidgets.forEach { widget ->
+            val (width, height) = surfaceSizeForBounds(widget.bounds)
+            nativeWidgetFilters[widget.id]?.let { filter ->
+                runCatching { filter.surfaceTexture.setDefaultBufferSize(width, height) }
+            }
+            nativeWidgetRenderers[widget.id]?.resizeBuffer(width, height)
+            mediaPipelines[widget.id]?.resizeBuffer(width, height)
         }
     }
 

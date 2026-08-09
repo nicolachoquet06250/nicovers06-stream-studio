@@ -206,6 +206,7 @@ data class StreamScene(
     val camera: CameraComponent = CameraComponent(),
     val chat: ChatComponent = ChatComponent(),
     val images: List<ImageComponent> = emptyList(),
+    val nativeWidgets: List<NativeWidgetComponent> = emptyList(),
     /**
      * Ordre de superposition des widgets.
      * Index 0 = le plus devant (premier de la liste sidebar).
@@ -213,6 +214,11 @@ data class StreamScene(
     val layerOrder: List<LayerRef> = WidgetModules.defaultLayerOrder,
 ) {
     fun image(id: String): ImageComponent? = images.firstOrNull { it.id == id }
+
+    fun nativeWidget(id: String): NativeWidgetComponent? = nativeWidgets.firstOrNull { it.id == id }
+
+    fun hasEnabledVisualWidget(): Boolean =
+        screen.enabled || camera.enabled || chat.enabled || images.any { it.enabled } || nativeWidgets.any { it.enabled }
 
     fun normalizedLayerOrder(): List<LayerRef> = WidgetModules.normalizeLayerOrder(layerOrder, this)
 
@@ -226,6 +232,10 @@ data class StreamScene(
         .put(
             "images",
             JSONArray().apply { images.take(ImageComponent.MAX_PER_SCENE).forEach { put(it.toJson()) } },
+        )
+        .put(
+            "nativeWidgets",
+            JSONArray().apply { sanitizeNativeWidgets(nativeWidgets).forEach { put(it.toJson()) } },
         )
         .put(
             "layerOrder",
@@ -244,6 +254,16 @@ data class StreamScene(
                 }
             }.take(ImageComponent.MAX_PER_SCENE)
             val storedOrder = json.optJSONArray("layerOrder")
+            val nativeWidgets = buildList {
+                val stored = json.optJSONArray("nativeWidgets")
+                if (stored != null) {
+                    for (index in 0 until stored.length()) {
+                        stored.optJSONObject(index)?.let { widgetJson ->
+                            NativeWidgetComponent.fromJson(widgetJson)?.let { add(it) }
+                        }
+                    }
+                }
+            }.let(::sanitizeNativeWidgets)
             val parsedOrder = buildList {
                 if (storedOrder != null) {
                     for (index in 0 until storedOrder.length()) {
@@ -262,9 +282,26 @@ data class StreamScene(
                 camera = CameraComponent.fromJson(json.optJSONObject("camera") ?: JSONObject()),
                 chat = ChatComponent.fromJson(json.optJSONObject("chat") ?: JSONObject()),
                 images = images,
+                nativeWidgets = nativeWidgets,
                 layerOrder = parsedOrder,
             )
             return scene.copy(layerOrder = scene.normalizedLayerOrder())
+        }
+
+        /** Applique également les plafonds lors de la lecture d'un fichier potentiellement modifié. */
+        fun sanitizeNativeWidgets(widgets: List<NativeWidgetComponent>): List<NativeWidgetComponent> {
+            val counts = mutableMapOf<WidgetType, Int>()
+            val ids = mutableSetOf<String>()
+            return widgets.filter { widget ->
+                val max = WidgetModules.of(widget.type).maxInstancesPerScene
+                val count = counts.getOrDefault(widget.type, 0)
+                val accepted = widget.id.isNotBlank() && widget.id !in ids && count < max
+                if (accepted) {
+                    ids += widget.id
+                    counts[widget.type] = count + 1
+                }
+                accepted
+            }
         }
     }
 }

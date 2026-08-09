@@ -17,9 +17,16 @@ L'application de quickstart as été générée par [android-qs-app-generator](h
 - caméra avant/arrière via CameraX ;
 - orientation de l’image caméra synchronisée avec le device, rotations à 90° et 180° comprises ;
 - segmentation du sujet et flou du décor en temps réel ;
-
 - **Garder le ratio** (écran / caméra / image) : verrouille le ratio du cadre au resize ; pour **écran/caméra**, contenu en **crop/cover** si activé, étirement si désactivé ; pour **image**, le contenu est **toujours cropté** (cover, jamais déformé), coché ou non ;
 - widget **Image** : import via le sélecteur système (JPEG, PNG, WebP, GIF, BMP, HEIC/HEIF, AVIF selon l’appareil), copie locale interne, max 10 par scène ;
+- widgets **100 % natifs** (API Android `Canvas`, surfaces et `MediaPlayer`, sans HTML ni WebView) :
+  - minuteur compte à rebours / chronomètre (max 1) ;
+  - formes rectangle, ellipse ou ligne (max 10) et arrière-plan uni / dégradé (max 1) ;
+  - bandeaux défilants avec vitesse et couleurs configurables (max 2) ;
+  - média vidéo local en boucle optionnelle (max 1, piste audio coupée pour conserver le mix microphone actuel) ;
+  - alertes animées déclenchables depuis l’éditeur (sans limite applicative) ;
+  - sondage / question avec réponses et résultats manuels (max 1) ;
+  - texte libre / lower third (sans limite applicative) ;
 - rendu du chat dans la composition vidéo (prévisualisation + chat réel Twitch IRC / YouTube Live Chat) ;
 - encodage H.264/AAC en 1280×720 à 30 FPS ;
 - diffusion RTMP/RTMPS via RootEncoder ;
@@ -35,7 +42,9 @@ Fond noir → Composition OpenGL RootEncoder
         │     → ML Kit Selfie Segmentation
         │     → sujet net + décor flouté
         │     → SurfaceFilterRender
-        └── Chat → SurfaceFilterRender
+        ├── Chat → SurfaceFilterRender
+        ├── Images / média local → SurfaceFilterRender
+        └── Widgets natifs Canvas → SurfaceFilterRender
         ↓
 H.264 720p / AAC
         ↓
@@ -75,7 +84,7 @@ L’APK de debug est généré dans `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Lancer un stream
 
-1. Ajoutez les widgets via le dropdown **Ajouter un widget** (chaque type a un maximum par scène, actuellement 1), activez/désactivez-les avec les interrupteurs, réordonnez-les via la poignée (haut = devant), puis positionnez les blocs écran/caméra/chat.
+1. Ajoutez les widgets via le dropdown **Ajouter un widget**, activez/désactivez-les avec les interrupteurs, configurez-les, réordonnez-les via la poignée (haut = devant), puis positionnez les blocs dans l’aperçu. Le dropdown affiche le plafond propre à chaque type ou « illimité ».
 2. Dans **Partage d’écran**, appuyez sur **Choisir l’écran ou l’application** et validez la source dans le sélecteur Android.
 3. Vérifiez immédiatement le contenu capturé dans le bloc **ÉCRAN** de la scène.
 4. Choisissez Twitch, YouTube ou une destination personnalisée.
@@ -136,6 +145,6 @@ Messages manuels de secours si aucune source live n’est connectée (destinatio
 - flux OAuth in-app (AppAuth) pour éviter le collage manuel des jetons ;
 - chiffrement local des destinations enregistrées avec Android Keystore ;
 - profils qualité 480p/720p/1080p et adaptation du débit ;
-- ajout de sources texte, image et navigateur ;
+- connexion des alertes et sondages aux API événementielles Twitch / YouTube ;
 - transitions entre scènes et enregistrement local ;
 - tests instrumentés sur plusieurs fabricants et versions Android.
