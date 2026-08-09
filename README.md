@@ -8,6 +8,7 @@ L'application de quickstart as été générée par [android-qs-app-generator](h
 
 - éditeur de scènes 16:9 avec création, sélection, suppression et persistance locale ;
 - interface sombre adaptative : panneaux côte à côte sur fenêtre large et empilés progressivement sur mobile, portrait ou fenêtre Samsung DeX réduite ;
+- mode immersif au lancement : barres d’état et de navigation masquées, avec respect des zones système restant visibles et des découpes d’écran ;
 - catalogue de widgets (`WidgetModules`) avec plafond d’instances par scène et dropdown d’ajout ;
 - ordre de superposition des widgets (`layerOrder`) : drag & drop par poignée dans la sidebar (haut = devant), appliqué immédiatement à la scène, l’aperçu et le flux ;
 - blocs écran, caméra et chat déplaçables/redimensionnables directement dans l’aperçu ;
