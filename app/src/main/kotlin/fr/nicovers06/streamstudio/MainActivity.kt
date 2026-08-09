@@ -539,6 +539,10 @@ class MainActivity : Activity() {
     }
 
     private fun attachLayerHandle(handle: View, ref: LayerRef) {
+        if (ref.type == WidgetType.BACKGROUND) {
+            handle.setOnTouchListener(null)
+            return
+        }
         handle.setOnTouchListener { view, event ->
             if (event.actionMasked != MotionEvent.ACTION_DOWN) return@setOnTouchListener false
             val block = widgetBlock(ref) ?: return@setOnTouchListener false
@@ -605,10 +609,20 @@ class MainActivity : Activity() {
     }
 
     private fun moveWidgetBlock(stack: LinearLayout, ref: LayerRef, targetIndex: Int) {
+        if (ref.type == WidgetType.BACKGROUND) return
         val block = widgetBlock(ref) ?: return
         val from = stack.indexOfChild(block)
         if (from < 0) return
-        val desired = targetIndex.coerceIn(0, (stack.childCount - 1).coerceAtLeast(0))
+        val backgroundIndex = (0 until stack.childCount).firstOrNull { index ->
+            val layer = LayerRef.parse(stack.getChildAt(index).tag as? String ?: return@firstOrNull false)
+            layer?.type == WidgetType.BACKGROUND
+        }
+        val lastAllowedIndex = if (backgroundIndex == null) {
+            (stack.childCount - 1).coerceAtLeast(0)
+        } else {
+            (backgroundIndex - 1).coerceAtLeast(0)
+        }
+        val desired = targetIndex.coerceIn(0, lastAllowedIndex)
         if (from == desired) return
         stack.removeView(block)
         stack.addView(block, desired.coerceAtMost(stack.childCount))

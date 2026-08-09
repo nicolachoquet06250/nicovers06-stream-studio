@@ -36,10 +36,10 @@ Ce document oriente les assistants de code (Junie, etc.) travaillant sur ce dép
 │       ├── AndroidManifest.xml
 │       ├── kotlin/fr/nicovers06/streamstudio/
 │       │   ├── MainActivity.kt
-│       │   ├── data/         # persistance scènes
-│       │   ├── model/        # modèle domaine + JSON
-│       │   ├── stream/       # encodage, pipelines, service
-│       │   └── ui/           # vues custom (bounds, ratio)
+│       │   ├── data/         # persistance scènes + médias importés
+│       │   ├── model/        # scènes, calques, widgets natifs + JSON
+│       │   ├── stream/       # composition GL, Canvas/média, encodage, service
+│       │   └── ui/           # bounds, ratio et éditeurs de widgets natifs
 │       └── res/              # layouts, drawables, values
 └── src/                      # miroir / legacy éventuel — la source de vérité est app/src
 ```
@@ -56,10 +56,10 @@ Si un dossier `src/` existe à la racine en parallèle, ne pas le traiter comme 
 | Package | Rôle |
 |---|---|
 | `fr.nicovers06.streamstudio` | `MainActivity` : UI, permissions, binding au service, sélection scènes / destinations |
-| `...model` | `StreamScene`, composants écran/caméra/chat, `NormalizedRect`, sérialisation JSON |
-| `...data` | `SceneRepository` : chargement / sauvegarde locale des scènes |
-| `...stream` | Pipeline vidéo/audio, RTMP, MediaProjection, CameraX, ML Kit, chat overlay |
-| `...ui` | `ComponentBoundsView`, `AspectRatioFrameLayout` |
+| `...model` | `StreamScene`, composants, `NativeWidgetComponent`, ordre des calques, limites d’instances et sérialisation JSON |
+| `...data` | `SceneRepository` et stockage interne des images / médias importés |
+| `...stream` | Pipeline vidéo/audio, RTMP, MediaProjection, CameraX, ML Kit, chat, images, médias et overlays Canvas natifs |
+| `...ui` | `ComponentBoundsView`, `AspectRatioFrameLayout`, contrôles d’images et de widgets natifs |
 
 ### Flux de diffusion (ne pas casser)
 
@@ -67,7 +67,9 @@ Si un dossier `src/` existe à la racine en parallèle, ne pas le traiter comme 
 Fond noir → Composition OpenGL (RootEncoder GenericStream)
         ├── Écran/app → MediaProjection → ScreenOverlayPipeline → SurfaceFilterRender
         ├── Caméra CameraX → (option) ML Kit Selfie Segmentation + flou → CameraOverlayPipeline → SurfaceFilterRender
-        └── Chat → ChatOverlayRenderer → SurfaceFilterRender
+        ├── Chat → ChatOverlayRenderer → SurfaceFilterRender
+        ├── Images / média local → SurfaceFilterRender
+        └── Widgets natifs Canvas → SurfaceFilterRender
         ↓
 H.264 1280×720 @ 30 FPS + AAC stéréo 44,1 kHz
         ↓
@@ -76,6 +78,7 @@ RTMP ou RTMPS
 
 - La composition repose sur **RootEncoder** (`com.pedro.library.generic.GenericStream`) et des **`SurfaceFilterRender`**.
 - Aperçu et stream partagent la même scène appliquée via `StreamService.applyScene`.
+- `layerOrder` est exprimé du premier plan vers l’arrière-plan ; le widget `BACKGROUND`, s’il existe, est toujours normalisé en dernière position et installé en premier dans la pile OpenGL.
 - La session **MediaProjection** est préparée dès la sélection système (aperçu), puis **réutilisée** au démarrage du stream — ne pas forcer une nouvelle sélection inutilement sauf après arrêt session/diffusion.
 - Micro désactivé → vraie piste **AAC silencieuse** (`SilenceAudioSource`), pas l’absence totale d’audio si le pipeline l’exige.
 
@@ -144,6 +147,7 @@ Windows : `.\gradlew.bat :app:assembleDebug`.
 9. **Foreground service** : types `camera|microphone|mediaProjection` — toute modification du service de stream doit rester alignée avec le manifest et les exigences Android 14+.
 10. **Commentaires** : le codebase en commente peu ; ne pas sur-commenter. Expliquer uniquement le non-évident (OpenGL, MediaProjection, cycle de vie FGS).
 11. **« Garder le ratio » (widgets)** : sauf précision explicite du product owner, tout widget qui expose ce paramètre doit, lorsqu’il est activé, **rogner (crop / cover)** le contenu pour remplir le cadre **sans le déformer** (ni stretch, ni letterbox/contain). Désactivé → étirement dans le cadre autorisé **sauf pour le widget Image**, dont le contenu est **toujours cropté** (cover) ; le switch ne verrouille alors que le ratio du cadre. Appliquer le même contrat au resize du cadre sur la scène, à l’aperçu et au pipeline de composition.
+12. **Ordre de l’arrière-plan** : `WidgetType.BACKGROUND` n’est jamais déplaçable et reste toujours le dernier élément de l’ordre front→back, dans la sidebar, la persistance et la composition du stream.
 
 ---
 
@@ -166,6 +170,9 @@ Windows : `.\gradlew.bat :app:assembleDebug`.
 - Caméra avant/arrière CameraX + orientation device
 - Segmentation sujet + flou décor (ML Kit)
 - Chat composé dans le flux (messages de **prévisualisation**)
+- Images locales composées dans la scène (max 10)
+- Widgets natifs Canvas / média : minuteur, formes, arrière-plan, bandeau, média vidéo, alertes, sondage / question et texte / lower third
+- Ordre de calques partagé entre sidebar, aperçu et flux, avec arrière-plan verrouillé au fond
 - Encodage + RTMP/RTMPS RootEncoder
 - Foreground service typé
 
@@ -180,7 +187,7 @@ Windows : `.\gradlew.bat :app:assembleDebug`.
 - Flux OAuth in-app (AppAuth) — jetons collés manuellement pour YouTube / optionnel Twitch
 - Chiffrement Keystore des destinations
 - Profils 480p/1080p / ABR
-- Sources texte, image, navigateur
+- Déclenchement automatique des alertes et sondages via les API événementielles Twitch / YouTube
 - Transitions de scènes, enregistrement local
 - Suite de tests instrumentés multi-OEM
 
@@ -214,6 +221,7 @@ Windows : `.\gradlew.bat :app:assembleDebug`.
 - `stream/ScreenOverlayPipeline.kt` — MediaProjection → surface
 - `MainActivity.kt` — permissions, binding service, UX scènes
 - `model/Scene.kt` — contrat de persistance
+- `model/WidgetModule.kt` — catalogue, limites et invariant d’ordre des calques
 - `AndroidManifest.xml` — permissions et `foregroundServiceType`
 
 ---

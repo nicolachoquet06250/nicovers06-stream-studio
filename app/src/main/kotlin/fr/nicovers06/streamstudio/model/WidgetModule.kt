@@ -172,12 +172,13 @@ object WidgetModules {
     fun visualLayerOrder(order: List<LayerRef>, scene: StreamScene): List<LayerRef> =
         normalizeLayerOrder(order, scene).filter { it.type in visualTypes }
 
-    /** Place [ref] tout devant (index 0). */
+    /** Place [ref] tout devant (index 0), sauf l'arrière-plan qui reste au fond. */
     fun bringToFront(order: List<LayerRef>, ref: LayerRef, scene: StreamScene): List<LayerRef> {
         val normalized = normalizeLayerOrder(order, scene).toMutableList()
+        if (ref.type == WidgetType.BACKGROUND) return normalized
         normalized.removeAll { it.storageKey() == ref.storageKey() }
         normalized.add(0, ref)
-        return normalized
+        return normalizeLayerOrder(normalized, scene)
     }
 
     fun bringToFront(order: List<LayerRef>, type: WidgetType, scene: StreamScene): List<LayerRef> {

@@ -44,6 +44,38 @@ class WidgetModulesTest {
     }
 
     @Test
+    fun `stored background order cannot place it above another widget`() {
+        val background = NativeWidgetComponent.create(WidgetType.BACKGROUND)
+        val text = NativeWidgetComponent.create(WidgetType.TEXT)
+        val backgroundRef = LayerRef.instance(WidgetType.BACKGROUND, background.id)
+        val textRef = LayerRef.instance(WidgetType.TEXT, text.id)
+        val scene = StreamScene(
+            nativeWidgets = listOf(background, text),
+            layerOrder = listOf(backgroundRef, textRef),
+        )
+
+        val normalized = scene.normalizedLayerOrder()
+
+        assertEquals(textRef, normalized.first())
+        assertEquals(backgroundRef, normalized.last())
+    }
+
+    @Test
+    fun `background cannot be brought to front`() {
+        val background = NativeWidgetComponent.create(WidgetType.BACKGROUND)
+        val text = NativeWidgetComponent.create(WidgetType.TEXT)
+        val backgroundRef = LayerRef.instance(WidgetType.BACKGROUND, background.id)
+        val scene = StreamScene(
+            nativeWidgets = listOf(background, text),
+            layerOrder = listOf(backgroundRef, LayerRef.instance(WidgetType.TEXT, text.id)),
+        )
+
+        val reordered = WidgetModules.bringToFront(scene.layerOrder, backgroundRef, scene)
+
+        assertEquals(backgroundRef, reordered.last())
+    }
+
+    @Test
     fun `dynamic layer keys round trip`() {
         val ref = LayerRef.instance(WidgetType.TICKER, "ticker-1")
         assertEquals(ref, LayerRef.parse(ref.storageKey()))
