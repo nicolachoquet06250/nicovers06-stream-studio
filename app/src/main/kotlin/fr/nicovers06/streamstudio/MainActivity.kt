@@ -33,6 +33,10 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import fr.nicovers06.streamstudio.data.SceneImageStore
 import fr.nicovers06.streamstudio.data.SceneRepository
 import fr.nicovers06.streamstudio.databinding.ActivityMainBinding
@@ -148,8 +152,10 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        configureImmersiveMode()
 
         repository = SceneRepository(this)
         scenes = repository.load()
@@ -163,6 +169,11 @@ class MainActivity : Activity() {
         refreshAddWidgetSpinner()
         renderScene()
         updateChatPlatformFields()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars()
     }
 
     override fun onStart() {
@@ -197,8 +208,34 @@ class MainActivity : Activity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        hideSystemBars()
         binding.responsiveStudioLayout.requestLayout()
         binding.previewFrame.requestLayout()
+    }
+
+    private fun configureImmersiveMode() {
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { view, windowInsets ->
+            val safeInsets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+            )
+            val imeInsets = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+            view.setPadding(
+                safeInsets.left,
+                safeInsets.top,
+                safeInsets.right,
+                maxOf(safeInsets.bottom, imeInsets.bottom),
+            )
+            windowInsets
+        }
+        ViewCompat.requestApplyInsets(binding.root)
+        hideSystemBars()
+    }
+
+    private fun hideSystemBars() {
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
