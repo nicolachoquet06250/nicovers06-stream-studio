@@ -7,8 +7,10 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.graphics.SurfaceTexture
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Handler
+import android.os.Looper
 import android.view.Surface
 import fr.nicovers06.streamstudio.data.SceneMediaStore
 import fr.nicovers06.streamstudio.model.NativeWidgetComponent
@@ -23,6 +25,7 @@ class MediaOverlayPipeline(
     private val mainHandler: Handler,
     private val onError: (String) -> Unit,
     private val onSourceAspectRatioChanged: (Float) -> Unit,
+    previewAudioEnabled: Boolean,
 ) {
     private val released = AtomicBoolean(false)
     private var player: MediaPlayer? = null
@@ -31,6 +34,7 @@ class MediaOverlayPipeline(
     private var currentFileName = ""
     private var loadGeneration = 0L
     private var component: NativeWidgetComponent? = null
+    private var previewAudioEnabled = previewAudioEnabled
 
     init {
         surfaceTexture.setDefaultBufferSize(bufferWidth.coerceAtLeast(2), bufferHeight.coerceAtLeast(2))
@@ -60,6 +64,19 @@ class MediaOverlayPipeline(
             bufferHeight = height.coerceAtLeast(2)
             if (player == null) drawPlaceholder(component?.mediaDisplayName.orEmpty())
         }
+    }
+
+    fun setPreviewAudioEnabled(enabled: Boolean) {
+        runOnPlayerThread {
+            previewAudioEnabled = enabled
+            applyPlayerVolume()
+        }
+    }
+
+    fun currentPositionMs(): Long = if (Looper.myLooper() == mainHandler.looper && playerPrepared) {
+        runCatching { player?.currentPosition?.toLong() }.getOrNull() ?: 0L
+    } else {
+        0L
     }
 
     fun release() {
@@ -109,9 +126,15 @@ class MediaOverlayPipeline(
         playbackSurface = createdSurface
         playerPrepared = false
         runCatching {
+            created.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                    .build(),
+            )
             created.setDataSource(file.absolutePath)
             created.setSurface(createdSurface)
-            created.setVolume(0f, 0f)
+            applyPlayerVolume(created)
             created.isLooping = value.mediaLoop
             created.setOnPreparedListener { prepared ->
                 if (released.get() || generation != loadGeneration || player !== prepared) return@setOnPreparedListener
@@ -154,6 +177,21 @@ class MediaOverlayPipeline(
         if (!playerPrepared) return
         val current = player ?: return
         runCatching { if (current.isPlaying) current.pause() }
+    }
+
+    private fun applyPlayerVolume(target: MediaPlayer? = player) {
+        val volume = if (previewAudioEnabled) 1f else 0f
+        target?.let { current -> runCatching { current.setVolume(volume, volume) } }
+    }
+
+    private fun runOnPlayerThread(action: () -> Unit) {
+        if (Looper.myLooper() == mainHandler.looper) {
+            action()
+        } else {
+            mainHandler.post {
+                if (!released.get()) action()
+            }
+        }
     }
 
     private fun releasePlayer() {

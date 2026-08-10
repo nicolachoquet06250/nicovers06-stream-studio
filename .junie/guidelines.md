@@ -72,6 +72,8 @@ Fond noir → Composition OpenGL (RootEncoder GenericStream)
         └── Widgets natifs Canvas → SurfaceFilterRender
         ↓
 H.264 1280×720 @ 30 FPS + AAC stéréo 44,1 kHz
+        ↑
+Micro (ou silence) + piste PCM du widget Média rééchantillonnée
         ↓
 RTMP ou RTMPS
 ```
@@ -172,6 +174,7 @@ Windows : `.\gradlew.bat :app:assembleDebug`.
 - Chat composé dans le flux (messages de **prévisualisation**)
 - Images locales composées dans la scène (max 10)
 - Widgets natifs Canvas / média : minuteur, formes, arrière-plan, bandeau, média vidéo, alertes, sondage / question et texte / lower third
+- Routage audio du widget Média : sortie multimédia de l’appareil en aperçu, puis décodage/rééchantillonnage PCM et mix avec le micro dans la piste AAC du stream
 - Ordre de calques partagé entre sidebar, aperçu et flux, avec arrière-plan verrouillé au fond
 - Encodage + RTMP/RTMPS RootEncoder
 - Foreground service typé
