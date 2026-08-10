@@ -22,6 +22,7 @@ class MediaOverlayPipeline(
     private var bufferHeight: Int,
     private val mainHandler: Handler,
     private val onError: (String) -> Unit,
+    private val onSourceAspectRatioChanged: (Float) -> Unit,
 ) {
     private val released = AtomicBoolean(false)
     private var player: MediaPlayer? = null
@@ -57,7 +58,6 @@ class MediaOverlayPipeline(
             if (released.get()) return@post
             bufferWidth = width.coerceAtLeast(2)
             bufferHeight = height.coerceAtLeast(2)
-            runCatching { surfaceTexture.setDefaultBufferSize(bufferWidth, bufferHeight) }
             if (player == null) drawPlaceholder(component?.mediaDisplayName.orEmpty())
         }
     }
@@ -85,6 +85,12 @@ class MediaOverlayPipeline(
             return
         }
         drawPlaceholder("Chargement de ${value.mediaDisplayName}…")
+        val sourceSize = SceneMediaStore.displaySize(context, value.mediaFileName)
+        if (sourceSize != null) {
+            val (sourceWidth, sourceHeight) = sourceSize
+            onSourceAspectRatioChanged(sourceWidth.toFloat() / sourceHeight.toFloat())
+            runCatching { surfaceTexture.setDefaultBufferSize(sourceWidth, sourceHeight) }
+        }
         val createdSurface = runCatching { Surface(surfaceTexture) }.getOrNull()
         if (createdSurface == null || !createdSurface.isValid) {
             runCatching { createdSurface?.release() }
@@ -110,8 +116,8 @@ class MediaOverlayPipeline(
             created.setOnPreparedListener { prepared ->
                 if (released.get() || generation != loadGeneration || player !== prepared) return@setOnPreparedListener
                 playerPrepared = true
-                runCatching {
-                    prepared.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
+                if (sourceSize == null && prepared.videoWidth > 0 && prepared.videoHeight > 0) {
+                    onSourceAspectRatioChanged(prepared.videoWidth.toFloat() / prepared.videoHeight.toFloat())
                 }
                 runCatching { prepared.isLooping = component?.mediaLoop ?: value.mediaLoop }
                 if (component?.enabled == true) startPlayer()
@@ -168,6 +174,8 @@ class MediaOverlayPipeline(
 
     private fun drawPlaceholder(label: String) {
         if (released.get() || player != null || playbackSurface != null) return
+        runCatching { surfaceTexture.setDefaultBufferSize(bufferWidth, bufferHeight) }
+        onSourceAspectRatioChanged(bufferWidth.toFloat() / bufferHeight.toFloat())
         // Une SurfaceTexture n'accepte qu'un producteur : le Canvas utilise donc une Surface éphémère.
         val canvasSurface = runCatching { Surface(surfaceTexture) }.getOrNull() ?: return
         if (!canvasSurface.isValid) {
