@@ -23,9 +23,10 @@ class MediaOverlayPipeline(
     private val mainHandler: Handler,
     private val onError: (String) -> Unit,
 ) {
-    private val surface = Surface(surfaceTexture)
     private val released = AtomicBoolean(false)
     private var player: MediaPlayer? = null
+    private var playbackSurface: Surface? = null
+    private var playerPrepared = false
     private var currentFileName = ""
     private var loadGeneration = 0L
     private var component: NativeWidgetComponent? = null
@@ -41,10 +42,11 @@ class MediaOverlayPipeline(
             component = value
             if (value.mediaFileName != currentFileName) {
                 load(value)
-            } else {
-                player?.isLooping = value.mediaLoop
+            } else if (playerPrepared) {
+                player?.let { current -> runCatching { current.isLooping = value.mediaLoop } }
                 if (value.enabled) startPlayer() else pausePlayer()
-                if (player == null) drawPlaceholder(value.mediaDisplayName)
+            } else if (player == null) {
+                drawPlaceholder(value.mediaDisplayName)
             }
         }
     }
@@ -65,7 +67,6 @@ class MediaOverlayPipeline(
         mainHandler.post {
             loadGeneration++
             releasePlayer()
-            runCatching { surface.release() }
         }
     }
 
@@ -84,28 +85,40 @@ class MediaOverlayPipeline(
             return
         }
         drawPlaceholder("Chargement de ${value.mediaDisplayName}…")
-        val created = MediaPlayer()
+        val createdSurface = runCatching { Surface(surfaceTexture) }.getOrNull()
+        if (createdSurface == null || !createdSurface.isValid) {
+            runCatching { createdSurface?.release() }
+            drawPlaceholder("Surface vidéo indisponible")
+            onError("Le média « ${value.mediaDisplayName} » ne peut pas être affiché")
+            return
+        }
+        val created = runCatching { MediaPlayer() }.getOrNull()
+        if (created == null) {
+            runCatching { createdSurface.release() }
+            drawPlaceholder("Lecteur vidéo indisponible")
+            onError("Le lecteur vidéo ne peut pas être initialisé")
+            return
+        }
         player = created
+        playbackSurface = createdSurface
+        playerPrepared = false
         runCatching {
             created.setDataSource(file.absolutePath)
-            created.setSurface(surface)
+            created.setSurface(createdSurface)
             created.setVolume(0f, 0f)
             created.isLooping = value.mediaLoop
             created.setOnPreparedListener { prepared ->
                 if (released.get() || generation != loadGeneration || player !== prepared) return@setOnPreparedListener
+                playerPrepared = true
                 runCatching {
                     prepared.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
                 }
-                if (component?.enabled == true) runCatching { prepared.start() }
-            }
-            created.setOnCompletionListener { completed ->
-                if (component?.mediaLoop == true) runCatching {
-                    completed.seekTo(0)
-                    completed.start()
-                }
+                runCatching { prepared.isLooping = component?.mediaLoop ?: value.mediaLoop }
+                if (component?.enabled == true) startPlayer()
             }
             created.setOnErrorListener { broken, _, _ ->
                 if (player === broken && generation == loadGeneration) {
+                    releasePlayer()
                     drawPlaceholder("Média illisible")
                     onError("Le média « ${value.mediaDisplayName} » ne peut pas être lu")
                 }
@@ -113,36 +126,59 @@ class MediaOverlayPipeline(
             }
             created.prepareAsync()
         }.onFailure {
-            if (player === created) player = null
-            runCatching { created.release() }
+            if (player === created) {
+                releasePlayer()
+            } else {
+                runCatching { created.setSurface(null) }
+                runCatching { created.release() }
+                runCatching { createdSurface.release() }
+            }
             drawPlaceholder("Média illisible")
             onError("Le média « ${value.mediaDisplayName} » ne peut pas être préparé")
         }
     }
 
     private fun startPlayer() {
+        if (!playerPrepared) return
         val current = player ?: return
         runCatching { if (!current.isPlaying) current.start() }
     }
 
     private fun pausePlayer() {
+        if (!playerPrepared) return
         val current = player ?: return
         runCatching { if (current.isPlaying) current.pause() }
     }
 
     private fun releasePlayer() {
         val old = player
+        val oldSurface = playbackSurface
         player = null
+        playbackSurface = null
+        playerPrepared = false
         if (old != null) {
+            runCatching { old.setOnPreparedListener(null) }
+            runCatching { old.setOnCompletionListener(null) }
+            runCatching { old.setOnErrorListener(null) }
             runCatching { old.setSurface(null) }
-            runCatching { old.stop() }
             runCatching { old.release() }
         }
+        runCatching { oldSurface?.release() }
     }
 
     private fun drawPlaceholder(label: String) {
-        if (released.get() || !surface.isValid) return
-        val canvas: Canvas = runCatching { surface.lockCanvas(null) }.getOrNull() ?: return
+        if (released.get() || player != null || playbackSurface != null) return
+        // Une SurfaceTexture n'accepte qu'un producteur : le Canvas utilise donc une Surface éphémère.
+        val canvasSurface = runCatching { Surface(surfaceTexture) }.getOrNull() ?: return
+        if (!canvasSurface.isValid) {
+            runCatching { canvasSurface.release() }
+            return
+        }
+        val canvas: Canvas = runCatching { canvasSurface.lockCanvas(null) }.getOrNull()
+            ?: run {
+                runCatching { canvasSurface.release() }
+                return
+            }
         try {
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
             val w = canvas.width.toFloat().takeIf { it > 0f } ?: bufferWidth.toFloat()
@@ -171,7 +207,8 @@ class MediaOverlayPipeline(
         } catch (_: RuntimeException) {
             Unit
         } finally {
-            runCatching { surface.unlockCanvasAndPost(canvas) }
+            runCatching { canvasSurface.unlockCanvasAndPost(canvas) }
+            runCatching { canvasSurface.release() }
         }
     }
 }
