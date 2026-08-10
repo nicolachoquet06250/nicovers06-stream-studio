@@ -221,9 +221,13 @@ data class ImageComponent(
 data class StreamScene(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "Scène principale",
+    val screenPresent: Boolean = true,
     val screen: ScreenComponent = ScreenComponent(),
+    val microphonePresent: Boolean = true,
     val microphoneEnabled: Boolean = true,
+    val cameraPresent: Boolean = true,
     val camera: CameraComponent = CameraComponent(),
+    val chatPresent: Boolean = true,
     val chat: ChatComponent = ChatComponent(),
     val images: List<ImageComponent> = emptyList(),
     val nativeWidgets: List<NativeWidgetComponent> = emptyList(),
@@ -238,16 +242,24 @@ data class StreamScene(
     fun nativeWidget(id: String): NativeWidgetComponent? = nativeWidgets.firstOrNull { it.id == id }
 
     fun hasEnabledVisualWidget(): Boolean =
-        screen.enabled || camera.enabled || chat.enabled || images.any { it.enabled } || nativeWidgets.any { it.enabled }
+        screenPresent && screen.enabled ||
+            cameraPresent && camera.enabled ||
+            chatPresent && chat.enabled ||
+            images.any { it.enabled } ||
+            nativeWidgets.any { it.enabled }
 
     fun normalizedLayerOrder(): List<LayerRef> = WidgetModules.normalizeLayerOrder(layerOrder, this)
 
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
         .put("name", name)
+        .put("screenPresent", screenPresent)
         .put("screen", screen.toJson())
+        .put("microphonePresent", microphonePresent)
         .put("microphoneEnabled", microphoneEnabled)
+        .put("cameraPresent", cameraPresent)
         .put("camera", camera.toJson())
+        .put("chatPresent", chatPresent)
         .put("chat", chat.toJson())
         .put(
             "images",
@@ -265,6 +277,18 @@ data class StreamScene(
     companion object {
         fun fromJson(json: JSONObject): StreamScene {
             val legacyScreenEnabled = json.optBoolean("screenEnabled", true)
+            val screenPresent = json.optBoolean("screenPresent", true)
+            val microphonePresent = json.optBoolean("microphonePresent", true)
+            val cameraPresent = json.optBoolean("cameraPresent", true)
+            val chatPresent = json.optBoolean("chatPresent", true)
+            val screen = ScreenComponent.fromJson(
+                json.optJSONObject("screen") ?: JSONObject(),
+                legacyEnabled = legacyScreenEnabled,
+            ).let { it.copy(enabled = screenPresent && it.enabled) }
+            val camera = CameraComponent.fromJson(json.optJSONObject("camera") ?: JSONObject())
+                .let { it.copy(enabled = cameraPresent && it.enabled) }
+            val chat = ChatComponent.fromJson(json.optJSONObject("chat") ?: JSONObject())
+                .let { it.copy(enabled = chatPresent && it.enabled) }
             val images = buildList {
                 val stored = json.optJSONArray("images")
                 if (stored != null) {
@@ -294,13 +318,14 @@ data class StreamScene(
             val scene = StreamScene(
                 id = json.optString("id").ifBlank { UUID.randomUUID().toString() },
                 name = json.optString("name", "Scène"),
-                screen = ScreenComponent.fromJson(
-                    json.optJSONObject("screen") ?: JSONObject(),
-                    legacyEnabled = legacyScreenEnabled,
-                ),
-                microphoneEnabled = json.optBoolean("microphoneEnabled", true),
-                camera = CameraComponent.fromJson(json.optJSONObject("camera") ?: JSONObject()),
-                chat = ChatComponent.fromJson(json.optJSONObject("chat") ?: JSONObject()),
+                screenPresent = screenPresent,
+                screen = screen,
+                microphonePresent = microphonePresent,
+                microphoneEnabled = microphonePresent && json.optBoolean("microphoneEnabled", true),
+                cameraPresent = cameraPresent,
+                camera = camera,
+                chatPresent = chatPresent,
+                chat = chat,
                 images = images,
                 nativeWidgets = nativeWidgets,
                 layerOrder = parsedOrder,
