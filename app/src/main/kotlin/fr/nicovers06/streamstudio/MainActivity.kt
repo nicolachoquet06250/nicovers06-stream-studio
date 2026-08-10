@@ -1082,6 +1082,11 @@ class MainActivity : Activity() {
                             else widget.copy(
                                 mediaFileName = imported.fileName,
                                 mediaDisplayName = imported.displayName,
+                                bounds = widget.bounds.withPixelAspectKeepingHeight(
+                                    pixelAspect = imported.width.toFloat() / imported.height.toFloat(),
+                                    sceneWidth = SCENE_ASPECT_WIDTH,
+                                    sceneHeight = SCENE_ASPECT_HEIGHT,
+                                ),
                             )
                         },
                     )
@@ -1509,6 +1514,8 @@ class MainActivity : Activity() {
         private const val REQUEST_PERMISSIONS = 100
         private const val REQUEST_SCREEN_SELECTION = 101
         private const val KEY_SCENE_INDEX = "scene_index"
+        private const val SCENE_ASPECT_WIDTH = 16
+        private const val SCENE_ASPECT_HEIGHT = 9
 
         private val PLATFORMS = listOf(
             PlatformPreset("Twitch", "rtmp://live.twitch.tv/app"),

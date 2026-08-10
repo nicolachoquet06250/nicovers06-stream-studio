@@ -21,14 +21,34 @@ data class NormalizedRect(
         )
     }
 
-    /**
-     * Ratio largeur/hauteur du rectangle en pixels d'une sc?ne [sceneWidth]?[sceneHeight].
-     */
+    /** Ratio largeur/hauteur du rectangle en pixels d'une scène [sceneWidth] × [sceneHeight]. */
     fun pixelAspect(sceneWidth: Int, sceneHeight: Int): Float {
         val safe = constrained()
         val w = (safe.width * sceneWidth).coerceAtLeast(1f)
         val h = (safe.height * sceneHeight).coerceAtLeast(1f)
         return w / h
+    }
+
+    /**
+     * Conserve la hauteur et le centre horizontal du cadre, puis adapte sa largeur au ratio pixel demandé.
+     */
+    fun withPixelAspectKeepingHeight(
+        pixelAspect: Float,
+        sceneWidth: Int,
+        sceneHeight: Int,
+    ): NormalizedRect {
+        val safe = constrained()
+        if (!pixelAspect.isFinite() || pixelAspect <= 0f || sceneWidth <= 0 || sceneHeight <= 0) {
+            return safe
+        }
+        val targetWidth = (
+            safe.height * pixelAspect * sceneHeight.toFloat() / sceneWidth.toFloat()
+        ).coerceIn(0.12f, 1f)
+        val centerX = safe.x + safe.width / 2f
+        return safe.copy(
+            x = (centerX - targetWidth / 2f).coerceIn(0f, 1f - targetWidth),
+            width = targetWidth,
+        )
     }
 
     fun toJson(): JSONObject = JSONObject()

@@ -279,6 +279,11 @@ class NativeWidgetControlView(
         }
         val loop = switch(R.string.native_widget_media_loop, widget.mediaLoop, editable)
         val ratio = switch(R.string.native_widget_media_ratio, widget.mediaKeepAspectRatio, editable)
+        ratio.setOnCheckedChangeListener { _, enabled ->
+            if (!binding) {
+                callbacks.onChanged(widget.copy(mediaLoop = loop.isChecked, mediaKeepAspectRatio = enabled))
+            }
+        }
         choose.setOnClickListener {
             callbacks.onChanged(widget.copy(mediaLoop = loop.isChecked, mediaKeepAspectRatio = ratio.isChecked))
             callbacks.onPickMedia()

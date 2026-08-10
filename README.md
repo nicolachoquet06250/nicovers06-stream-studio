@@ -17,13 +17,13 @@ L'application de quickstart as été générée par [android-qs-app-generator](h
 - caméra avant/arrière via CameraX ;
 - orientation de l’image caméra synchronisée avec le device, rotations à 90° et 180° comprises ;
 - segmentation du sujet et flou du décor en temps réel ;
-- **Garder le ratio** (écran / caméra / image) : verrouille le ratio du cadre au resize ; pour **écran/caméra**, contenu en **crop/cover** si activé, étirement si désactivé ; pour **image**, le contenu est **toujours cropté** (cover, jamais déformé), coché ou non ;
+- **Garder le ratio** (écran / caméra / image / média) : verrouille le ratio du cadre au resize ; pour **écran/caméra**, contenu en **crop/cover** si activé, étirement si désactivé ; pour **image/média**, le contenu est **toujours cropté** (cover, jamais déformé), coché ou non ; à l’import d’une vidéo, la hauteur du cadre est conservée et sa largeur s’adapte au ratio de la vidéo ;
 - widget **Image** : import via le sélecteur système (JPEG, PNG, WebP, GIF, BMP, HEIC/HEIF, AVIF selon l’appareil), copie locale interne, max 10 par scène ;
 - widgets **100 % natifs** (API Android `Canvas`, surfaces et `MediaPlayer`, sans HTML ni WebView) :
   - minuteur compte à rebours / chronomètre (max 1) ;
   - formes rectangle, ellipse ou ligne (max 10) et arrière-plan uni / dégradé ancré sous tous les autres widgets (max 1) ;
   - bandeaux défilants avec vitesse et couleurs configurables (max 2) ;
-  - média vidéo local en boucle optionnelle (max 1, piste audio coupée pour conserver le mix microphone actuel) ;
+  - média vidéo local en boucle optionnelle, avec cadre initial adapté au ratio de la vidéo (max 1, piste audio coupée pour conserver le mix microphone actuel) ;
   - alertes animées déclenchables depuis l’éditeur (sans limite applicative) ;
   - sondage / question avec réponses et résultats manuels (max 1) ;
   - texte libre / lower third (sans limite applicative) ;
