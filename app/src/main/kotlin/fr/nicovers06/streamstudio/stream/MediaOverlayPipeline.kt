@@ -49,7 +49,7 @@ class MediaOverlayPipeline(
                 load(value)
             } else if (playerPrepared) {
                 player?.let { current -> runCatching { current.isLooping = value.mediaLoop } }
-                if (value.enabled) startPlayer() else pausePlayer()
+                if (value.isMediaPlaybackActive()) startPlayer() else pausePlayer()
             } else if (player == null) {
                 drawPlaceholder(value.mediaDisplayName)
             }
@@ -143,7 +143,7 @@ class MediaOverlayPipeline(
                     onSourceAspectRatioChanged(prepared.videoWidth.toFloat() / prepared.videoHeight.toFloat())
                 }
                 runCatching { prepared.isLooping = component?.mediaLoop ?: value.mediaLoop }
-                if (component?.enabled == true) startPlayer()
+                if (component?.isMediaPlaybackActive() == true) startPlayer()
             }
             created.setOnErrorListener { broken, _, _ ->
                 if (player === broken && generation == loadGeneration) {

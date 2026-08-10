@@ -103,7 +103,7 @@ class NativeWidgetControlView(
             WidgetType.SHAPE -> buildShapeEditor(widget, editable, callbacks)
             WidgetType.BACKGROUND -> buildBackgroundEditor(widget, editable, callbacks)
             WidgetType.TICKER -> buildTickerEditor(widget, editable, callbacks)
-            WidgetType.MEDIA -> buildMediaEditor(widget, editable, callbacks)
+            WidgetType.MEDIA -> buildMediaEditor(widget, editable, runtimeActionsEnabled, callbacks)
             WidgetType.ALERT -> buildAlertEditor(widget, editable, runtimeActionsEnabled, callbacks)
             WidgetType.POLL -> buildPollEditor(widget, editable, callbacks)
             WidgetType.TEXT -> buildTextEditor(widget, editable, callbacks)
@@ -263,6 +263,7 @@ class NativeWidgetControlView(
     private fun buildMediaEditor(
         widget: NativeWidgetComponent,
         editable: Boolean,
+        runtimeActionsEnabled: Boolean,
         callbacks: Callbacks,
     ) {
         options.addView(TextView(context).apply {
@@ -279,6 +280,45 @@ class NativeWidgetControlView(
         }
         val loop = switch(R.string.native_widget_media_loop, widget.mediaLoop, editable)
         val ratio = switch(R.string.native_widget_media_ratio, widget.mediaKeepAspectRatio, editable)
+        val hasMedia = widget.mediaFileName.isNotBlank()
+        val playbackRow = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(8)
+            }
+        }
+        val play = button(
+            R.string.native_widget_media_play,
+            runtimeActionsEnabled && hasMedia && !widget.mediaPlaying,
+        ).apply {
+            layoutParams = LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(4) }
+            setOnClickListener {
+                callbacks.onChanged(
+                    widget.copy(
+                        mediaLoop = loop.isChecked,
+                        mediaPlaying = true,
+                        mediaKeepAspectRatio = ratio.isChecked,
+                    ),
+                )
+            }
+        }
+        val pause = button(
+            R.string.native_widget_media_pause,
+            runtimeActionsEnabled && hasMedia && widget.mediaPlaying,
+        ).apply {
+            layoutParams = LayoutParams(0, dp(44), 1f).apply { marginStart = dp(4) }
+            setOnClickListener {
+                callbacks.onChanged(
+                    widget.copy(
+                        mediaLoop = loop.isChecked,
+                        mediaPlaying = false,
+                        mediaKeepAspectRatio = ratio.isChecked,
+                    ),
+                )
+            }
+        }
+        playbackRow.addView(play)
+        playbackRow.addView(pause)
         ratio.setOnCheckedChangeListener { _, enabled ->
             if (!binding) {
                 callbacks.onChanged(widget.copy(mediaLoop = loop.isChecked, mediaKeepAspectRatio = enabled))
@@ -289,6 +329,7 @@ class NativeWidgetControlView(
             callbacks.onPickMedia()
         }
         options.addView(choose)
+        options.addView(playbackRow)
         options.addView(loop)
         options.addView(ratio)
         options.addView(helpText(R.string.native_widget_media_audio_notice))

@@ -107,9 +107,11 @@
     <string name="native_widget_media_choose">Choisir une vidéo</string>
     <string name="native_widget_media_none">Aucune vidéo sélectionnée</string>
     <string name="native_widget_media_file">Fichier : %1$s</string>
+    <string name="native_widget_media_play">Lecture</string>
+    <string name="native_widget_media_pause">Pause</string>
     <string name="native_widget_media_loop">Lire en boucle</string>
     <string name="native_widget_media_ratio">Garder le ratio</string>
-    <string name="native_widget_media_audio_notice">La vidéo est intégrée nativement. Sa piste audio est coupée pour éviter de remplacer le microphone du stream.</string>
+    <string name="native_widget_media_audio_notice">Lecture et pause contrôlent aussi le son : sur l’appareil en aperçu, puis dans la sortie du stream pendant le direct.</string>
     <string name="native_widget_media_success">Vidéo importée</string>
     <string name="native_widget_media_cancelled">Sélection de vidéo annulée</string>
     <string name="native_widget_media_failed">Vidéo non prise en charge, illisible ou trop volumineuse</string>
