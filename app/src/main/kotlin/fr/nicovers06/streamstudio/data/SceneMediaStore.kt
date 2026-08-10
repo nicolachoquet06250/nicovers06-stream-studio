@@ -55,6 +55,9 @@ object SceneMediaStore {
 
     fun isPlayable(context: Context, fileName: String): Boolean = probe(fileFor(context, fileName)) != null
 
+    fun displaySize(context: Context, fileName: String): Pair<Int, Int>? =
+        probe(fileFor(context, fileName))
+
     fun delete(context: Context, fileName: String) {
         if (fileName.isBlank()) return
         runCatching { fileFor(context, fileName).delete() }

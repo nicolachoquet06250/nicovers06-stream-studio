@@ -26,6 +26,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import com.pedro.common.ConnectChecker
+import com.pedro.encoder.input.gl.render.filters.`object`.BaseObjectFilterRender
 import com.pedro.encoder.input.gl.render.filters.`object`.SurfaceFilterRender
 import com.pedro.encoder.input.sources.audio.MicrophoneSource
 import com.pedro.encoder.input.sources.audio.SilenceAudioSource
@@ -84,7 +85,7 @@ class StreamService : LifecycleService(), ConnectChecker {
     private var chatFilter: SurfaceFilterRender? = null
     private val imageFilters = linkedMapOf<String, SurfaceFilterRender>()
     private val imageRenderers = linkedMapOf<String, ImageOverlayRenderer>()
-    private val nativeWidgetFilters = linkedMapOf<String, SurfaceFilterRender>()
+    private val nativeWidgetFilters = linkedMapOf<String, BaseObjectFilterRender>()
     private val nativeWidgetRenderers = linkedMapOf<String, NativeWidgetOverlayRenderer>()
     private val mediaPipelines = linkedMapOf<String, MediaOverlayPipeline>()
     private val imageBitmapCache = ConcurrentHashMap<String, android.graphics.Bitmap>()
@@ -526,36 +527,55 @@ class StreamService : LifecycleService(), ConnectChecker {
     private fun createNativeWidgetFilter(
         initial: NativeWidgetComponent,
         generation: Long,
-    ): SurfaceFilterRender {
+    ): BaseObjectFilterRender {
         val widgetId = initial.id
-        return SurfaceFilterRender(SurfaceFilterRender.SurfaceReadyCallback { texture: SurfaceTexture ->
-            mainHandler.post surfaceReady@{
-                if (!overlayGeneration.isCurrent(generation)) return@surfaceReady
-                val component = currentScene.nativeWidget(widgetId) ?: initial
-                val (width, height) = surfaceSizeForBounds(component.bounds)
-                texture.setDefaultBufferSize(width, height)
-                nativeWidgetRenderers.remove(widgetId)?.release()
-                mediaPipelines.remove(widgetId)?.release()
-                if (component.type == WidgetType.MEDIA) {
-                    mediaPipelines[widgetId] = MediaOverlayPipeline(
-                        context = applicationContext,
-                        surfaceTexture = texture,
-                        bufferWidth = width,
-                        bufferHeight = height,
-                        mainHandler = mainHandler,
-                        onError = { message -> listener?.onWarning(message) },
-                    ).also { it.update(component) }
-                } else {
-                    nativeWidgetRenderers[widgetId] = NativeWidgetOverlayRenderer(
-                        surfaceTexture = texture,
-                        bufferWidth = width,
-                        bufferHeight = height,
-                        renderHandler = overlayRenderHandler,
-                    ).also { it.update(component) }
-                }
-                applyScene(currentScene)
+        if (initial.type == WidgetType.MEDIA) {
+            lateinit var filter: CoverSurfaceFilterRender
+            filter = CoverSurfaceFilterRender { texture ->
+                initializeNativeWidgetSurface(initial, generation, texture, filter)
             }
+            return filter
+        }
+        return SurfaceFilterRender(SurfaceFilterRender.SurfaceReadyCallback { texture ->
+            initializeNativeWidgetSurface(initial, generation, texture, null)
         })
+    }
+
+    private fun initializeNativeWidgetSurface(
+        initial: NativeWidgetComponent,
+        generation: Long,
+        texture: SurfaceTexture,
+        mediaFilter: CoverSurfaceFilterRender?,
+    ) {
+        val widgetId = initial.id
+        mainHandler.post surfaceReady@{
+            if (!overlayGeneration.isCurrent(generation)) return@surfaceReady
+            val component = currentScene.nativeWidget(widgetId) ?: initial
+            val (width, height) = surfaceSizeForBounds(component.bounds)
+            texture.setDefaultBufferSize(width, height)
+            nativeWidgetRenderers.remove(widgetId)?.release()
+            mediaPipelines.remove(widgetId)?.release()
+            if (component.type == WidgetType.MEDIA && mediaFilter != null) {
+                mediaFilter.setTargetAspectRatio(component.bounds.pixelAspect(OUTPUT_WIDTH, OUTPUT_HEIGHT))
+                mediaPipelines[widgetId] = MediaOverlayPipeline(
+                    context = applicationContext,
+                    surfaceTexture = texture,
+                    bufferWidth = width,
+                    bufferHeight = height,
+                    mainHandler = mainHandler,
+                    onError = { message -> listener?.onWarning(message) },
+                    onSourceAspectRatioChanged = mediaFilter::setSourceAspectRatio,
+                ).also { it.update(component) }
+            } else {
+                nativeWidgetRenderers[widgetId] = NativeWidgetOverlayRenderer(
+                    surfaceTexture = texture,
+                    bufferWidth = width,
+                    bufferHeight = height,
+                    renderHandler = overlayRenderHandler,
+                ).also { it.update(component) }
+            }
+            applyScene(currentScene)
+        }
     }
 
     private fun installFiltersInOrder(layerOrderFrontFirst: List<LayerRef>) {
@@ -605,7 +625,7 @@ class StreamService : LifecycleService(), ConnectChecker {
         }
     }
 
-    private fun filterFor(ref: LayerRef): SurfaceFilterRender? = when (ref.type) {
+    private fun filterFor(ref: LayerRef): BaseObjectFilterRender? = when (ref.type) {
         WidgetType.SCREEN -> screenFilter
         WidgetType.CAMERA -> cameraFilter
         WidgetType.CHAT -> chatFilter
@@ -774,7 +794,7 @@ class StreamService : LifecycleService(), ConnectChecker {
         if (notifyListener) listener?.onScreenCaptureChanged(false)
     }
 
-    private fun applyTransform(filter: SurfaceFilterRender, bounds: NormalizedRect) {
+    private fun applyTransform(filter: BaseObjectFilterRender, bounds: NormalizedRect) {
         val safe = bounds.constrained()
         filter.setScale(safe.width * 100f, safe.height * 100f)
         filter.setPosition(safe.x * 100f, safe.y * 100f)
@@ -804,7 +824,14 @@ class StreamService : LifecycleService(), ConnectChecker {
         scene.nativeWidgets.forEach { widget ->
             val (width, height) = surfaceSizeForBounds(widget.bounds)
             nativeWidgetFilters[widget.id]?.let { filter ->
-                runCatching { filter.surfaceTexture.setDefaultBufferSize(width, height) }
+                when (filter) {
+                    is CoverSurfaceFilterRender -> {
+                        filter.setTargetAspectRatio(widget.bounds.pixelAspect(OUTPUT_WIDTH, OUTPUT_HEIGHT))
+                    }
+                    is SurfaceFilterRender -> {
+                        runCatching { filter.surfaceTexture.setDefaultBufferSize(width, height) }
+                    }
+                }
             }
             nativeWidgetRenderers[widget.id]?.resizeBuffer(width, height)
             mediaPipelines[widget.id]?.resizeBuffer(width, height)
