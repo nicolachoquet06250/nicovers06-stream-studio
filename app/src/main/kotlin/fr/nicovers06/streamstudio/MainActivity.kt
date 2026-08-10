@@ -135,14 +135,26 @@ class MainActivity : Activity() {
             }
             service = localService
             localService.setListener(streamListener)
-            localService.applyScene(currentScene())
+            val scene = currentScene()
+            val cameraPermissionMissing = scene.camera.enabled &&
+                ContextCompat.checkSelfPermission(
+                    this@MainActivity,
+                    Manifest.permission.CAMERA,
+                ) != PackageManager.PERMISSION_GRANTED
+            // La demande runtime appartient à l'activité : le service ne doit pas tenter
+            // d'ouvrir la caméra pendant que son résultat est encore en attente.
+            localService.applyScene(
+                if (cameraPermissionMissing) {
+                    scene.copy(camera = scene.camera.copy(enabled = false))
+                } else {
+                    scene
+                },
+            )
             localService.attachPreview(binding.streamPreview)
             binding.previewHint.visibility = View.GONE
             streaming = localService.isStreaming()
             updateStreamingUi(if (streaming) "EN DIRECT" else "PRÊT")
-            if (currentScene().camera.enabled &&
-                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
-            ) {
+            if (cameraPermissionMissing) {
                 ensureCameraPermissionForPreview()
             }
         }
