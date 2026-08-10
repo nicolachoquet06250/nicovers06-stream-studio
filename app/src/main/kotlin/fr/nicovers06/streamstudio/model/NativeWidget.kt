@@ -58,6 +58,7 @@ data class NativeWidgetComponent(
     val mediaFileName: String = "",
     val mediaDisplayName: String = "Aucun média sélectionné",
     val mediaLoop: Boolean = true,
+    val mediaPlaying: Boolean = true,
     /** Verrouille le ratio du cadre ; le contenu vidéo reste toujours en crop/cover. */
     val mediaKeepAspectRatio: Boolean = true,
     val alertDurationSeconds: Int = DEFAULT_ALERT_SECONDS,
@@ -123,6 +124,9 @@ data class NativeWidgetComponent(
         timerStartedAtEpochMs = 0L,
     )
 
+    fun isMediaPlaybackActive(): Boolean =
+        type == WidgetType.MEDIA && enabled && mediaPlaying && mediaFileName.isNotBlank()
+
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
         .put("type", type.name)
@@ -144,6 +148,7 @@ data class NativeWidgetComponent(
         .put("mediaFileName", mediaFileName)
         .put("mediaDisplayName", mediaDisplayName)
         .put("mediaLoop", mediaLoop)
+        .put("mediaPlaying", mediaPlaying)
         .put("mediaKeepAspectRatio", mediaKeepAspectRatio)
         .put("alertDurationSeconds", alertDurationSeconds.coerceIn(1, 60))
         .put("alertTriggeredAtEpochMs", alertTriggeredAtEpochMs.coerceAtLeast(0L))
@@ -226,6 +231,7 @@ data class NativeWidgetComponent(
                 mediaDisplayName = json.optString("mediaDisplayName", defaults.mediaDisplayName)
                     .ifBlank { defaults.mediaDisplayName },
                 mediaLoop = json.optBoolean("mediaLoop", defaults.mediaLoop),
+                mediaPlaying = json.optBoolean("mediaPlaying", defaults.mediaPlaying),
                 mediaKeepAspectRatio = json.optBoolean("mediaKeepAspectRatio", defaults.mediaKeepAspectRatio),
                 alertDurationSeconds = json.optInt("alertDurationSeconds", defaults.alertDurationSeconds)
                     .coerceIn(1, 60),

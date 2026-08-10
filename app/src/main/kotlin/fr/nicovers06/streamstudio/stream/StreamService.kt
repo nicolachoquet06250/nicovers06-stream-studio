@@ -63,6 +63,14 @@ class StreamService : LifecycleService(), ConnectChecker {
         val service: StreamService get() = this@StreamService
     }
 
+    private data class MediaAudioConfiguration(
+        val microphoneEnabled: Boolean,
+        val widgetId: String?,
+        val fileName: String,
+        val loop: Boolean,
+        val playbackActive: Boolean,
+    )
+
     private val binder = LocalBinder()
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var overlayRenderThread: HandlerThread
@@ -186,6 +194,7 @@ class StreamService : LifecycleService(), ConnectChecker {
     }
 
     fun applyScene(scene: StreamScene) {
+        val previousMediaAudioConfiguration = mediaAudioConfiguration(currentScene)
         currentScene = scene
         val layerOrder = scene.normalizedLayerOrder()
         val imageIds = scene.images.map { it.id }.toSet()
@@ -241,6 +250,9 @@ class StreamService : LifecycleService(), ConnectChecker {
         refreshChatOverlay()
         refreshImageOverlays()
         refreshNativeWidgetOverlays()
+        if (isStreaming() && previousMediaAudioConfiguration != mediaAudioConfiguration(scene)) {
+            configureAudio(scene) { message -> listener?.onWarning(message) }
+        }
         syncLiveChat()
     }
 
@@ -385,18 +397,19 @@ class StreamService : LifecycleService(), ConnectChecker {
             .onFailure { failStart("Impossible de démarrer l’encodage : ${it.message.orEmpty()}") }
     }
 
-    private fun configureAudio(scene: StreamScene): Boolean {
+    private fun configureAudio(
+        scene: StreamScene,
+        onFailure: (String) -> Unit = ::failStart,
+    ): Boolean {
         if (
             scene.microphoneEnabled &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
         ) {
-            failStart("Autorisation microphone manquante")
+            onFailure("Autorisation microphone manquante")
             return false
         }
 
-        val mediaWidget = scene.nativeWidgets.firstOrNull { widget ->
-            widget.type == WidgetType.MEDIA && widget.enabled && widget.mediaFileName.isNotBlank()
-        }
+        val mediaWidget = scene.nativeWidgets.firstOrNull(NativeWidgetComponent::isMediaPlaybackActive)
         if (mediaWidget != null) {
             val mediaFile = SceneMediaStore.fileFor(applicationContext, mediaWidget.mediaFileName)
             val audioInfo = SceneMediaStore.audioInfo(applicationContext, mediaWidget.mediaFileName)
@@ -420,20 +433,34 @@ class StreamService : LifecycleService(), ConnectChecker {
             }
         }
 
-        return configureBaseAudio(scene.microphoneEnabled)
+        return configureBaseAudio(scene.microphoneEnabled, onFailure)
     }
 
-    private fun configureBaseAudio(microphoneEnabled: Boolean): Boolean {
+    private fun configureBaseAudio(
+        microphoneEnabled: Boolean,
+        onFailure: (String) -> Unit,
+    ): Boolean {
         return if (microphoneEnabled) {
             runCatching {
                 stream.changeAudioSource(MicrophoneSource())
                 (stream.audioSource as MicrophoneSource).unMute()
-            }.onFailure { failStart("Microphone indisponible : ${it.message.orEmpty()}") }.isSuccess
+            }.onFailure { onFailure("Microphone indisponible : ${it.message.orEmpty()}") }.isSuccess
         } else {
             runCatching { stream.changeAudioSource(SilenceAudioSource()) }
-                .onFailure { failStart("Piste audio silencieuse indisponible") }
+                .onFailure { onFailure("Piste audio silencieuse indisponible") }
                 .isSuccess
         }
+    }
+
+    private fun mediaAudioConfiguration(scene: StreamScene): MediaAudioConfiguration {
+        val widget = scene.nativeWidgets.firstOrNull { it.type == WidgetType.MEDIA }
+        return MediaAudioConfiguration(
+            microphoneEnabled = scene.microphoneEnabled,
+            widgetId = widget?.id,
+            fileName = widget?.mediaFileName.orEmpty(),
+            loop = widget?.mediaLoop ?: false,
+            playbackActive = widget?.isMediaPlaybackActive() == true,
+        )
     }
 
     private fun configureVideo(scene: StreamScene): Boolean {

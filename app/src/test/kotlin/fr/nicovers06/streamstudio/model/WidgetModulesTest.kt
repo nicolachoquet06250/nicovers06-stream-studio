@@ -105,4 +105,15 @@ class WidgetModulesTest {
         assertEquals("00:00", timer.formattedTimer(nowEpochMs = 90_000L))
         assertEquals(30_000L, timer.pauseTimer(nowEpochMs = 31_000L).timerBaseElapsedMs)
     }
+
+    @Test
+    fun `media playback requires an enabled playing widget with a file`() {
+        val media = NativeWidgetComponent.create(WidgetType.MEDIA)
+            .copy(mediaFileName = "video.mp4")
+
+        assertTrue(media.isMediaPlaybackActive())
+        assertFalse(media.copy(mediaPlaying = false).isMediaPlaybackActive())
+        assertFalse(media.copy(enabled = false).isMediaPlaybackActive())
+        assertFalse(media.copy(mediaFileName = "").isMediaPlaybackActive())
+    }
 }

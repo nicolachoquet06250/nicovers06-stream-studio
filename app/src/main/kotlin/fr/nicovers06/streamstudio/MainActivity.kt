@@ -1094,6 +1094,7 @@ class MainActivity : Activity() {
                             else widget.copy(
                                 mediaFileName = imported.fileName,
                                 mediaDisplayName = imported.displayName,
+                                mediaPlaying = true,
                                 bounds = widget.bounds.withPixelAspectKeepingHeight(
                                     pixelAspect = imported.width.toFloat() / imported.height.toFloat(),
                                     sceneWidth = SCENE_ASPECT_WIDTH,
@@ -1176,8 +1177,14 @@ class MainActivity : Activity() {
                 runtimeActionsEnabled = true,
                 callbacks = NativeWidgetControlView.Callbacks(
                     onChanged = { updated ->
-                        if (!streaming || updated.type == WidgetType.TIMER || updated.type == WidgetType.ALERT) {
-                            updateNativeWidget(updated)
+                        when {
+                            !streaming -> updateNativeWidget(updated)
+                            updated.type == WidgetType.TIMER || updated.type == WidgetType.ALERT -> {
+                                updateNativeWidget(updated)
+                            }
+                            updated.type == WidgetType.MEDIA && updated.mediaPlaying != widget.mediaPlaying -> {
+                                updateNativeWidget(widget.copy(mediaPlaying = updated.mediaPlaying))
+                            }
                         }
                     },
                     onRemoved = {
