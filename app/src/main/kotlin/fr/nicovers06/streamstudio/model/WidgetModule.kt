@@ -85,9 +85,9 @@ object WidgetModules {
         all.first { it.type == type }
 
     fun instanceCount(scene: StreamScene, type: WidgetType): Int = when (type) {
-        WidgetType.SCREEN -> if (scene.screen.enabled) 1 else 0
-        WidgetType.CAMERA -> if (scene.camera.enabled) 1 else 0
-        WidgetType.CHAT -> if (scene.chat.enabled) 1 else 0
+        WidgetType.SCREEN -> if (scene.screenPresent) 1 else 0
+        WidgetType.CAMERA -> if (scene.cameraPresent) 1 else 0
+        WidgetType.CHAT -> if (scene.chatPresent) 1 else 0
         WidgetType.IMAGE -> scene.images.size
         WidgetType.TIMER,
         WidgetType.SHAPE,
@@ -98,7 +98,24 @@ object WidgetModules {
         WidgetType.POLL,
         WidgetType.TEXT,
         -> scene.nativeWidgets.count { it.type == type }
-        WidgetType.MICROPHONE -> if (scene.microphoneEnabled) 1 else 0
+        WidgetType.MICROPHONE -> if (scene.microphonePresent) 1 else 0
+    }
+
+    fun activeInstanceCount(scene: StreamScene, type: WidgetType): Int = when (type) {
+        WidgetType.SCREEN -> if (scene.screenPresent && scene.screen.enabled) 1 else 0
+        WidgetType.CAMERA -> if (scene.cameraPresent && scene.camera.enabled) 1 else 0
+        WidgetType.CHAT -> if (scene.chatPresent && scene.chat.enabled) 1 else 0
+        WidgetType.IMAGE -> scene.images.count { it.enabled }
+        WidgetType.TIMER,
+        WidgetType.SHAPE,
+        WidgetType.BACKGROUND,
+        WidgetType.TICKER,
+        WidgetType.MEDIA,
+        WidgetType.ALERT,
+        WidgetType.POLL,
+        WidgetType.TEXT,
+        -> scene.nativeWidgets.count { it.type == type && it.enabled }
+        WidgetType.MICROPHONE -> if (scene.microphonePresent && scene.microphoneEnabled) 1 else 0
     }
 
     fun canAdd(scene: StreamScene, type: WidgetType): Boolean {
@@ -129,6 +146,14 @@ object WidgetModules {
         WidgetType.MICROPHONE,
     )
 
+    private fun singletonPresent(scene: StreamScene, type: WidgetType): Boolean = when (type) {
+        WidgetType.SCREEN -> scene.screenPresent
+        WidgetType.CAMERA -> scene.cameraPresent
+        WidgetType.CHAT -> scene.chatPresent
+        WidgetType.MICROPHONE -> scene.microphonePresent
+        else -> false
+    }
+
     /** Liste front→back complète, sans doublon, avec types manquants / instances absentes. */
     fun normalizeLayerOrder(order: List<LayerRef>, scene: StreamScene): List<LayerRef> {
         val imageIds = scene.images.map { it.id }.toSet()
@@ -148,6 +173,7 @@ object WidgetModules {
                     val id = ref.instanceId ?: return
                     if (nativeWidgetsById[id]?.type != ref.type) return
                 }
+                ref.type in singletonTypes -> if (!singletonPresent(scene, ref.type)) return
             }
             seen.add(key)
             result.add(ref)
@@ -161,7 +187,7 @@ object WidgetModules {
         scene.nativeWidgets.filter { it.type != WidgetType.BACKGROUND }.forEach { widget ->
             tryAdd(LayerRef.instance(widget.type, widget.id))
         }
-        singletonTypes.forEach { tryAdd(LayerRef.singleton(it)) }
+        singletonTypes.filter { singletonPresent(scene, it) }.forEach { tryAdd(LayerRef.singleton(it)) }
         scene.nativeWidgets.filter { it.type == WidgetType.BACKGROUND }.forEach { widget ->
             tryAdd(LayerRef.instance(widget.type, widget.id))
         }

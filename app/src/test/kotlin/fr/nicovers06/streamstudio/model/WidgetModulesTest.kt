@@ -29,6 +29,32 @@ class WidgetModulesTest {
     }
 
     @Test
+    fun `disabled singleton remains present until it is removed`() {
+        val scene = StreamScene(screen = ScreenComponent(enabled = false))
+
+        assertEquals(1, WidgetModules.instanceCount(scene, WidgetType.SCREEN))
+        assertEquals(0, WidgetModules.activeInstanceCount(scene, WidgetType.SCREEN))
+        assertFalse(WidgetModules.canAdd(scene, WidgetType.SCREEN))
+    }
+
+    @Test
+    fun `removed singleton leaves the layer order and becomes addable`() {
+        val screenRef = LayerRef.singleton(WidgetType.SCREEN)
+        val scene = StreamScene(
+            screenPresent = false,
+            screen = ScreenComponent(enabled = false),
+        )
+
+        assertFalse(screenRef in scene.normalizedLayerOrder())
+        assertEquals(0, WidgetModules.instanceCount(scene, WidgetType.SCREEN))
+        assertTrue(WidgetModules.canAdd(scene, WidgetType.SCREEN))
+
+        val readded = scene.copy(screenPresent = true, screen = scene.screen.copy(enabled = true))
+        val reordered = WidgetModules.bringToFront(readded.layerOrder, WidgetType.SCREEN, readded)
+        assertEquals(screenRef, reordered.first())
+    }
+
+    @Test
     fun `missing background layer is normalized behind the scene`() {
         val background = NativeWidgetComponent.create(WidgetType.BACKGROUND)
         val text = NativeWidgetComponent.create(WidgetType.TEXT)

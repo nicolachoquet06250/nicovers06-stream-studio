@@ -295,6 +295,10 @@ class MainActivity : Activity() {
         addSceneButton.setOnClickListener { showAddSceneDialog() }
         deleteSceneButton.setOnClickListener { deleteCurrentScene() }
         addWidgetButton.setOnClickListener { addSelectedWidget() }
+        removeScreenWidgetButton.setOnClickListener { removeSingletonWidget(WidgetType.SCREEN) }
+        removeCameraWidgetButton.setOnClickListener { removeSingletonWidget(WidgetType.CAMERA) }
+        removeChatWidgetButton.setOnClickListener { removeSingletonWidget(WidgetType.CHAT) }
+        removeMicrophoneWidgetButton.setOnClickListener { removeSingletonWidget(WidgetType.MICROPHONE) }
 
         screenSwitch.setOnCheckedChangeListener { _, enabled ->
             if (!rendering) {
@@ -347,6 +351,10 @@ class MainActivity : Activity() {
         val scene = currentScene()
         rendering = true
         binding.sceneSpinner.setSelection(selectedSceneIndex, false)
+        binding.screenWidgetBlock.visibility = if (scene.screenPresent) View.VISIBLE else View.GONE
+        binding.cameraWidgetBlock.visibility = if (scene.cameraPresent) View.VISIBLE else View.GONE
+        binding.chatWidgetBlock.visibility = if (scene.chatPresent) View.VISIBLE else View.GONE
+        binding.microphoneWidgetBlock.visibility = if (scene.microphonePresent) View.VISIBLE else View.GONE
         binding.screenSwitch.isChecked = scene.screen.enabled
         binding.microphoneSwitch.isChecked = scene.microphoneEnabled
         binding.cameraSwitch.isChecked = scene.camera.enabled
@@ -354,8 +362,10 @@ class MainActivity : Activity() {
         binding.screenKeepAspectSwitch.isChecked = scene.screen.keepAspectRatio
         binding.cameraKeepAspectSwitch.isChecked = scene.camera.keepAspectRatio
         binding.chatSwitch.isChecked = scene.chat.enabled
-        binding.cameraOptions.visibility = if (scene.camera.enabled) View.VISIBLE else View.GONE
-        binding.chatOptions.visibility = if (scene.chat.enabled) View.VISIBLE else View.GONE
+        binding.cameraOptions.visibility = if (scene.cameraPresent && scene.camera.enabled) View.VISIBLE else View.GONE
+        binding.chatOptions.visibility = if (scene.chatPresent && scene.chat.enabled) View.VISIBLE else View.GONE
+        binding.microphoneOptions.visibility =
+            if (scene.microphonePresent && scene.microphoneEnabled) View.VISIBLE else View.GONE
         binding.frontCameraButton.isSelected = scene.camera.facing == CameraFacing.FRONT
         binding.backCameraButton.isSelected = scene.camera.facing == CameraFacing.BACK
         binding.screenBounds.bind(
@@ -446,31 +456,23 @@ class MainActivity : Activity() {
         }
         when (module.type) {
             WidgetType.SCREEN -> updateScene {
-                it.copy(
-                    screen = it.screen.copy(enabled = true),
-                    layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.SCREEN, it),
-                )
+                val next = it.copy(screenPresent = true, screen = it.screen.copy(enabled = true))
+                next.copy(layerOrder = WidgetModules.bringToFront(next.layerOrder, WidgetType.SCREEN, next))
             }
             WidgetType.CAMERA -> {
                 updateScene {
-                    it.copy(
-                        camera = it.camera.copy(enabled = true),
-                        layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.CAMERA, it),
-                    )
+                    val next = it.copy(cameraPresent = true, camera = it.camera.copy(enabled = true))
+                    next.copy(layerOrder = WidgetModules.bringToFront(next.layerOrder, WidgetType.CAMERA, next))
                 }
                 ensureCameraPermissionForPreview()
             }
             WidgetType.CHAT -> updateScene {
-                it.copy(
-                    chat = it.chat.copy(enabled = true),
-                    layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.CHAT, it),
-                )
+                val next = it.copy(chatPresent = true, chat = it.chat.copy(enabled = true))
+                next.copy(layerOrder = WidgetModules.bringToFront(next.layerOrder, WidgetType.CHAT, next))
             }
             WidgetType.MICROPHONE -> updateScene {
-                it.copy(
-                    microphoneEnabled = true,
-                    layerOrder = WidgetModules.bringToFront(it.layerOrder, WidgetType.MICROPHONE, it),
-                )
+                val next = it.copy(microphonePresent = true, microphoneEnabled = true)
+                next.copy(layerOrder = WidgetModules.bringToFront(next.layerOrder, WidgetType.MICROPHONE, next))
             }
             WidgetType.IMAGE -> {
                 val image = ImageComponent(
@@ -644,7 +646,9 @@ class MainActivity : Activity() {
         val stack = binding.widgetStack
         return buildList {
             for (index in 0 until stack.childCount) {
-                val tag = stack.getChildAt(index).tag as? String
+                val child = stack.getChildAt(index)
+                if (child.visibility != View.VISIBLE) continue
+                val tag = child.tag as? String
                 LayerRef.parse(tag.orEmpty())?.let { add(it) }
             }
         }.let { WidgetModules.normalizeLayerOrder(it, currentScene()) }
@@ -689,7 +693,7 @@ class MainActivity : Activity() {
     }
 
     private fun updateActiveWidgetCount(scene: StreamScene) {
-        val count = WidgetModules.all.sumOf { WidgetModules.instanceCount(scene, it.type) }
+        val count = WidgetModules.all.sumOf { WidgetModules.activeInstanceCount(scene, it.type) }
         binding.activeWidgetsText.text = resources.getQuantityString(R.plurals.active_widgets_count, count, count)
     }
 
@@ -1226,6 +1230,36 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun removeSingletonWidget(type: WidgetType) {
+        if (streaming || rendering || type.instanceBased) return
+        if (type == WidgetType.SCREEN) {
+            screenCapturePrepared = false
+            screenCapturePreparing = false
+        }
+        updateScene { scene ->
+            val withoutWidget = when (type) {
+                WidgetType.SCREEN -> scene.copy(
+                    screenPresent = false,
+                    screen = scene.screen.copy(enabled = false),
+                )
+                WidgetType.CAMERA -> scene.copy(
+                    cameraPresent = false,
+                    camera = scene.camera.copy(enabled = false),
+                )
+                WidgetType.CHAT -> scene.copy(
+                    chatPresent = false,
+                    chat = scene.chat.copy(enabled = false),
+                )
+                WidgetType.MICROPHONE -> scene.copy(
+                    microphonePresent = false,
+                    microphoneEnabled = false,
+                )
+                else -> scene
+            }
+            withoutWidget.copy(layerOrder = withoutWidget.normalizedLayerOrder())
+        }
+    }
+
     private fun attachStaticLayerHandles() {
         attachLayerHandle(binding.screenLayerHandle, LayerRef.singleton(WidgetType.SCREEN))
         attachLayerHandle(binding.cameraLayerHandle, LayerRef.singleton(WidgetType.CAMERA))
@@ -1462,6 +1496,9 @@ class MainActivity : Activity() {
         microphoneSwitch.isEnabled = !streaming
         cameraSwitch.isEnabled = !streaming
         chatSwitch.isEnabled = !streaming
+        removeCameraWidgetButton.isEnabled = !streaming
+        removeChatWidgetButton.isEnabled = !streaming
+        removeMicrophoneWidgetButton.isEnabled = !streaming
         platformSpinner.isEnabled = !streaming
         serverInput.isEnabled = !streaming
         streamKeyInput.isEnabled = !streaming
@@ -1480,11 +1517,13 @@ class MainActivity : Activity() {
     }
 
     private fun updateScreenSelectionUi() = with(binding) {
-        val screenEnabled = currentScene().screen.enabled
+        val scene = currentScene()
+        val screenEnabled = scene.screenPresent && scene.screen.enabled
         val supportsSingleAppSharing = AndroidCapabilities.supportsSingleAppScreenSharing()
         sceneSpinner.isEnabled = !streaming && !screenCapturePreparing
         screenSwitch.isEnabled = !streaming && !screenCapturePreparing
         screenOptions.visibility = if (screenEnabled) View.VISIBLE else View.GONE
+        removeScreenWidgetButton.isEnabled = scene.screenPresent && !streaming && !screenCapturePreparing
         screenCaptureHelp.setText(
             if (supportsSingleAppSharing) R.string.screen_capture_help else R.string.screen_capture_help_legacy,
         )
