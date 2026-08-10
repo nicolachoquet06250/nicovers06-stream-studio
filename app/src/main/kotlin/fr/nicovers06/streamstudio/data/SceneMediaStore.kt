@@ -112,7 +112,7 @@ object SceneMediaStore {
                     }
                 }
             }
-        } catch (_: RuntimeException) {
+        } catch (_: Exception) {
             null
         } finally {
             runCatching { extractor.release() }
