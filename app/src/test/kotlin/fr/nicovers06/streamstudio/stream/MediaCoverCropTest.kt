@@ -1,6 +1,7 @@
 package fr.nicovers06.streamstudio.stream
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MediaCoverCropTest {
@@ -38,5 +39,19 @@ class MediaCoverCropTest {
         )
 
         assertEquals(MediaCoverCrop.FULL, crop)
+    }
+
+    @Test
+    fun `texture matrix preserves vertical orientation`() {
+        val crop = MediaCoverCrop.centered(sourceAspect = 9f / 16f, targetAspect = 16f / 9f)
+        val matrix = FloatArray(16)
+
+        crop.writeTextureMatrix(matrix)
+
+        val sampledYAtZero = matrix[13]
+        val sampledYAtOne = matrix[5] + matrix[13]
+        assertTrue("L'axe vertical ne doit pas être inversé", sampledYAtOne > sampledYAtZero)
+        assertEquals(crop.offsetY, sampledYAtZero, 0.0001f)
+        assertEquals(crop.offsetY + crop.scaleY, sampledYAtOne, 0.0001f)
     }
 }

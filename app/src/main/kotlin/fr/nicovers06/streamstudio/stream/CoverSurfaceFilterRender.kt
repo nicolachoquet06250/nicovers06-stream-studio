@@ -9,7 +9,6 @@ import android.graphics.PointF
 import android.graphics.SurfaceTexture
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
-import android.opengl.Matrix
 import android.os.Handler
 import android.os.Looper
 import android.view.Surface
@@ -54,8 +53,6 @@ class CoverSurfaceFilterRender(
 
     private lateinit var inputSurfaceTexture: SurfaceTexture
     private var inputSurface: Surface? = null
-    private val producerTransform = FloatArray(16)
-    private val cropTransform = FloatArray(16)
     private val objectTransform = FloatArray(16)
 
     @Volatile
@@ -96,12 +93,11 @@ class CoverSurfaceFilterRender(
 
     override fun drawFilter() {
         inputSurfaceTexture.updateTexImage()
-        inputSurfaceTexture.getTransformMatrix(producerTransform)
         val crop = MediaCoverCrop.centered(sourceAspect, targetAspect)
-        Matrix.setIdentityM(cropTransform, 0)
-        Matrix.translateM(cropTransform, 0, crop.offsetX, crop.offsetY, 0f)
-        Matrix.scaleM(cropTransform, 0, crop.scaleX, crop.scaleY, 1f)
-        Matrix.multiplyMM(objectTransform, 0, producerTransform, 0, cropTransform, 0)
+        // SurfaceFilterRender échantillonne la surface avec une matrice identité. Appliquer ici
+        // SurfaceTexture.getTransformMatrix() ajoute une seconde inversion verticale au média.
+        // La matrice personnalisée ne doit donc contenir que le crop centré.
+        crop.writeTextureMatrix(objectTransform)
 
         GLES20.glUseProgram(program)
         squareVertex.position(SQUARE_VERTEX_DATA_POS_OFFSET)
