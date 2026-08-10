@@ -69,7 +69,16 @@ object SceneMediaStore {
                 ?.toIntOrNull().orZero()
             val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
                 ?.toIntOrNull().orZero()
-            if (width > 0 && height > 0) width to height else null
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                ?.toIntOrNull().orZero()
+            val normalizedRotation = ((rotation % 360) + 360) % 360
+            if (width <= 0 || height <= 0) {
+                null
+            } else if (normalizedRotation == 90 || normalizedRotation == 270) {
+                height to width
+            } else {
+                width to height
+            }
         } catch (_: RuntimeException) {
             null
         } finally {

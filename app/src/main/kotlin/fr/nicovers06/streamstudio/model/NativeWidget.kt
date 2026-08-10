@@ -58,6 +58,7 @@ data class NativeWidgetComponent(
     val mediaFileName: String = "",
     val mediaDisplayName: String = "Aucun média sélectionné",
     val mediaLoop: Boolean = true,
+    /** Verrouille le ratio du cadre ; le contenu vidéo reste toujours en crop/cover. */
     val mediaKeepAspectRatio: Boolean = true,
     val alertDurationSeconds: Int = DEFAULT_ALERT_SECONDS,
     val alertTriggeredAtEpochMs: Long = 0L,
