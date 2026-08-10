@@ -1,6 +1,8 @@
 package fr.nicovers06.streamstudio.data
 
 import android.content.Context
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -58,6 +60,9 @@ object SceneMediaStore {
     fun displaySize(context: Context, fileName: String): Pair<Int, Int>? =
         probe(fileFor(context, fileName))
 
+    fun audioInfo(context: Context, fileName: String): AudioInfo? =
+        probeAudio(fileFor(context, fileName))
+
     fun delete(context: Context, fileName: String) {
         if (fileName.isBlank()) return
         runCatching { fileFor(context, fileName).delete() }
@@ -82,10 +87,35 @@ object SceneMediaStore {
             } else {
                 width to height
             }
-        } catch (_: RuntimeException) {
+        } catch (_: Exception) {
             null
         } finally {
             runCatching { retriever.release() }
+        }
+    }
+
+    private fun probeAudio(file: File): AudioInfo? {
+        if (!file.isFile || file.length() <= 0L) return null
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(file.absolutePath)
+            (0 until extractor.trackCount).firstNotNullOfOrNull { index ->
+                val format = extractor.getTrackFormat(index)
+                val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
+                if (!mime.startsWith("audio/", ignoreCase = true)) {
+                    null
+                } else {
+                    val sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    val channelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    AudioInfo(sampleRate, channelCount).takeIf {
+                        it.sampleRate > 0 && it.channelCount > 0
+                    }
+                }
+            }
+        } catch (_: RuntimeException) {
+            null
+        } finally {
+            runCatching { extractor.release() }
         }
     }
 
@@ -107,4 +137,12 @@ object SceneMediaStore {
         val width: Int,
         val height: Int,
     )
+
+    data class AudioInfo(
+        val sampleRate: Int,
+        val channelCount: Int,
+    ) {
+        val decoderChannelCount: Int get() = if (channelCount > 1) 2 else 1
+        val isStereo: Boolean get() = decoderChannelCount == 2
+    }
 }

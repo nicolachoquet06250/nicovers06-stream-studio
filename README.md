@@ -23,7 +23,7 @@ L'application de quickstart as été générée par [android-qs-app-generator](h
   - minuteur compte à rebours / chronomètre (max 1) ;
   - formes rectangle, ellipse ou ligne (max 10) et arrière-plan uni / dégradé ancré sous tous les autres widgets (max 1) ;
   - bandeaux défilants avec vitesse et couleurs configurables (max 2) ;
-  - média vidéo local en boucle optionnelle, avec cadre initial adapté au ratio de la vidéo (max 1, piste audio coupée pour conserver le mix microphone actuel) ;
+  - média vidéo local en boucle optionnelle, avec cadre initial adapté au ratio de la vidéo (max 1) ; en aperçu, sa piste audio suit la sortie multimédia de l’appareil, puis elle est coupée localement et mélangée nativement avec le micro dans la piste AAC pendant le stream ;
   - alertes animées déclenchables depuis l’éditeur (sans limite applicative) ;
   - sondage / question avec réponses et résultats manuels (max 1) ;
   - texte libre / lower third (sans limite applicative) ;
@@ -49,9 +49,14 @@ Fond noir → Composition OpenGL RootEncoder
 H.264 720p / AAC
         ↓
 RTMP ou RTMPS
+
+Audio du média → décodage PCM → rééchantillonnage 44,1 kHz
+Micro (ou silence) ───────────→ mix PCM → AAC stéréo → RTMP(S)
 ```
 
 La caméra est analysée avec une stratégie `KEEP_ONLY_LATEST`. En mode flou, le masque ML Kit est lissé puis utilisé pour mélanger le sujet original avec une version réellement floutée du décor. Le résultat final est écrit dans la surface du bloc caméra : c’est donc bien le flux modifié, et non la caméra brute, qui est transmis dans la scène.
+
+Le son du widget Média utilise la sortie audio normale du téléphone, de la tablette ou de DeX tant que l’application reste en aperçu. Dès le lancement du stream, cette sortie locale est rendue muette pour éviter l’écho : la piste du fichier est décodée séparément, convertie en PCM stéréo 44,1 kHz puis mélangée au microphone avant l’encodage AAC. Si le microphone est désactivé, le média est mélangé à la piste silencieuse qui maintient la continuité audio du flux.
 
 L’ordre de scène est stocké du premier plan vers l’arrière-plan. Lorsqu’un widget d’arrière-plan existe, la normalisation du modèle le replace systématiquement en dernière position ; le pipeline OpenGL l’installe donc avant les autres filtres, au fond de la composition.
 

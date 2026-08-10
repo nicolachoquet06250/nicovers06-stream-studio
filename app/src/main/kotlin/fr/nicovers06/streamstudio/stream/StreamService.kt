@@ -35,6 +35,7 @@ import com.pedro.library.generic.GenericStream
 import fr.nicovers06.streamstudio.MainActivity
 import fr.nicovers06.streamstudio.R
 import fr.nicovers06.streamstudio.data.SceneImageStore
+import fr.nicovers06.streamstudio.data.SceneMediaStore
 import fr.nicovers06.streamstudio.model.ImageComponent
 import fr.nicovers06.streamstudio.model.LayerRef
 import fr.nicovers06.streamstudio.model.ChatMessage
@@ -100,6 +101,7 @@ class StreamService : LifecycleService(), ConnectChecker {
     private var liveChatActive = false
     private val previewLease = IdentityLease<TextureView>()
     private val overlayGeneration = GenerationGate()
+    private var mediaAudioOnPreviewDevice = true
 
     override fun onCreate() {
         super.onCreate()
@@ -301,6 +303,7 @@ class StreamService : LifecycleService(), ConnectChecker {
         if (stream.audioSource !is SilenceAudioSource) {
             runCatching { stream.changeAudioSource(SilenceAudioSource()) }
         }
+        routeMediaAudioToPreview(true)
         stopScreenCapture()
         // Keep live chat running for preview if chat stays enabled.
         syncLiveChat()
@@ -370,6 +373,7 @@ class StreamService : LifecycleService(), ConnectChecker {
         ensureFilters()
         applyScene(scene)
 
+        routeMediaAudioToPreview(false)
         if (!configureAudio(scene)) return
         if (!configureVideo(scene)) return
 
@@ -382,20 +386,53 @@ class StreamService : LifecycleService(), ConnectChecker {
     }
 
     private fun configureAudio(scene: StreamScene): Boolean {
-        return if (scene.microphoneEnabled) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                failStart("Autorisation microphone manquante")
-                false
-            } else {
-                runCatching {
-                    if (stream.audioSource !is MicrophoneSource) stream.changeAudioSource(MicrophoneSource())
-                    (stream.audioSource as MicrophoneSource).unMute()
-                }.onFailure { failStart("Microphone indisponible : ${it.message.orEmpty()}") }.isSuccess
+        if (
+            scene.microphoneEnabled &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+        ) {
+            failStart("Autorisation microphone manquante")
+            return false
+        }
+
+        val mediaWidget = scene.nativeWidgets.firstOrNull { widget ->
+            widget.type == WidgetType.MEDIA && widget.enabled && widget.mediaFileName.isNotBlank()
+        }
+        if (mediaWidget != null) {
+            val mediaFile = SceneMediaStore.fileFor(applicationContext, mediaWidget.mediaFileName)
+            val audioInfo = SceneMediaStore.audioInfo(applicationContext, mediaWidget.mediaFileName)
+            if (mediaFile.isFile && audioInfo != null) {
+                val source = MediaStreamAudioSource(
+                    context = applicationContext,
+                    file = mediaFile,
+                    mediaInfo = audioInfo,
+                    loop = mediaWidget.mediaLoop,
+                    microphoneEnabled = scene.microphoneEnabled,
+                    startPositionMs = mediaPipelines[mediaWidget.id]?.currentPositionMs() ?: 0L,
+                    onMediaAudioUnavailable = {
+                        mainHandler.post {
+                            listener?.onWarning("La piste audio du média ne peut pas être décodée sur cet appareil")
+                        }
+                    },
+                )
+                val mediaConfigured = runCatching { stream.changeAudioSource(source) }.isSuccess
+                if (mediaConfigured) return true
+                listener?.onWarning("La piste audio du média est indisponible ; le stream continue sans elle")
             }
-        } else {
+        }
+
+        return configureBaseAudio(scene.microphoneEnabled)
+    }
+
+    private fun configureBaseAudio(microphoneEnabled: Boolean): Boolean {
+        return if (microphoneEnabled) {
             runCatching {
-                if (stream.audioSource !is SilenceAudioSource) stream.changeAudioSource(SilenceAudioSource())
-            }.onFailure { failStart("Piste audio silencieuse indisponible") }.isSuccess
+                stream.changeAudioSource(MicrophoneSource())
+                (stream.audioSource as MicrophoneSource).unMute()
+            }.onFailure { failStart("Microphone indisponible : ${it.message.orEmpty()}") }.isSuccess
+        } else {
+            runCatching { stream.changeAudioSource(SilenceAudioSource()) }
+                .onFailure { failStart("Piste audio silencieuse indisponible") }
+                .isSuccess
         }
     }
 
@@ -565,6 +602,7 @@ class StreamService : LifecycleService(), ConnectChecker {
                     mainHandler = mainHandler,
                     onError = { message -> listener?.onWarning(message) },
                     onSourceAspectRatioChanged = mediaFilter::setSourceAspectRatio,
+                    previewAudioEnabled = mediaAudioOnPreviewDevice,
                 ).also { it.update(component) }
             } else {
                 nativeWidgetRenderers[widgetId] = NativeWidgetOverlayRenderer(
@@ -701,6 +739,11 @@ class StreamService : LifecycleService(), ConnectChecker {
             nativeWidgetRenderers[widget.id]?.update(widget)
             mediaPipelines[widget.id]?.update(widget)
         }
+    }
+
+    private fun routeMediaAudioToPreview(enabled: Boolean) {
+        mediaAudioOnPreviewDevice = enabled
+        mediaPipelines.values.forEach { pipeline -> pipeline.setPreviewAudioEnabled(enabled) }
     }
 
     private fun refreshChatOverlay() {
@@ -920,6 +963,7 @@ class StreamService : LifecycleService(), ConnectChecker {
         if (stream.audioSource !is SilenceAudioSource) {
             runCatching { stream.changeAudioSource(SilenceAudioSource()) }
         }
+        routeMediaAudioToPreview(true)
         stopScreenCapture()
         if (!stream.isOnPreview) {
             filtersAdded = false
