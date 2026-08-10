@@ -7,7 +7,24 @@ data class MediaCoverCrop(
     val offsetX: Float,
     val offsetY: Float,
 ) {
+    /**
+     * Écrit la matrice OpenGL de crop sans modifier l'orientation de la texture.
+     * Les échelles X et Y restent positives afin que le média ne soit ni retourné ni miroir.
+     */
+    fun writeTextureMatrix(target: FloatArray) {
+        require(target.size >= MATRIX_SIZE) { "Une matrice OpenGL doit contenir 16 valeurs" }
+        target.fill(0f)
+        target[0] = scaleX
+        target[5] = scaleY
+        target[10] = 1f
+        target[12] = offsetX
+        target[13] = offsetY
+        target[15] = 1f
+    }
+
     companion object {
+        private const val MATRIX_SIZE = 16
+
         val FULL = MediaCoverCrop(
             scaleX = 1f,
             scaleY = 1f,
